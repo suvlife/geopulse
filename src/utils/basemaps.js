@@ -67,15 +67,21 @@ export const saveBasemapPref = (id) => {
   try { localStorage.setItem(STORAGE_KEY, id) } catch { /* ignore */ }
 }
 
-// 并发测速,返回最先响应的底图 id;全部超时则用腾讯
+// 并发测速:深色底图(与 UI 配套)中取最快;全挂了才降级亮色高德
 export async function pickFastestBasemap(timeoutMs = 3500) {
-  const probes = BASEMAPS.filter((b) => b.probe).map((b) =>
-    fetch(b.probe, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) })
-      .then(() => b.id)
-  )
+  const race = (ids, ms) =>
+    Promise.any(
+      BASEMAPS.filter((b) => ids.includes(b.id) && b.probe).map((b) =>
+        fetch(b.probe, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(ms) }).then(() => b.id)
+      )
+    )
   try {
-    return await Promise.any(probes)
+    return await race(['tencent-dark', 'carto-dark', 'esri-dark'], timeoutMs)
   } catch {
-    return 'tencent-dark'
+    try {
+      return await race(['amap-light'], timeoutMs)
+    } catch {
+      return 'tencent-dark'
+    }
   }
 }

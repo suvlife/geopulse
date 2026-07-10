@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { TY_CATS, AGENCY_COLORS } from '../utils/scales.js'
 
 const MAG_ITEMS = [
@@ -16,8 +17,17 @@ const ALT_ITEMS = [
 ]
 
 export default function Legend({ mode, colorBy }) {
+  // 手机上默认折叠,桌面默认展开
+  const [open, setOpen] = useState(() => (typeof window === 'undefined' ? true : window.innerWidth > 860))
+
+  if (!open) {
+    return (
+      <button className="legend legend-collapsed" onClick={() => setOpen(true)}>ℹ️ 图例</button>
+    )
+  }
+
   return (
-    <div className="legend">
+    <div className="legend" onClick={() => { if (window.innerWidth <= 860) setOpen(false) }}>
       {mode === 'quake' ? (
         <>
           <div className="legend-title">{colorBy === 'depth' ? '震源深度' : '震级'}</div>

@@ -172,9 +172,17 @@ export default function App() {
     } else if (typhoon) {
       const pts = [...typhoon.track.map((p) => p.coord), ...Object.values(typhoon.forecasts).flat().map((p) => p.coord)]
       const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1])
+      // 手机:面板贴底占 46vh → 用下方 padding;桌面:面板悬浮在左 → 用左侧 padding
+      const mobile = window.innerWidth <= 860
       map.fitBounds(
         [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
-        { padding: { left: 400, right: 60, top: 80, bottom: 60 }, duration: 1200, maxZoom: 6 }
+        {
+          padding: mobile
+            ? { left: 30, right: 30, top: 70, bottom: Math.round(window.innerHeight * 0.5) }
+            : { left: 400, right: 60, top: 80, bottom: 60 },
+          duration: 1200,
+          maxZoom: 6,
+        }
       )
     }
   }, [mode, typhoon?.id])
