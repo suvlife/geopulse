@@ -84,7 +84,9 @@ export default function App() {
   const [agencies, setAgencies] = useState({})
 
   // ── 航班状态 ──
-  const [flightCenter, setFlightCenter] = useState([121.5, 31.2])
+  const BEIJING = [116.4, 39.9]
+  const [flightCenter, setFlightCenter] = useState(BEIJING)
+  const firstFlightVisitRef = useRef(true)
   const fl = useFlights(flightCenter, mode === 'flight')
   const [selectedFlight, setSelectedFlight] = useState(null)
   const [flightInfo, setFlightInfo] = useState(null) // { route, photo }
@@ -159,7 +161,14 @@ export default function App() {
     if (mode === 'quake') {
       map.flyTo({ center: [150, 8], zoom: 1.6, duration: 1200 })
     } else if (mode === 'flight') {
-      if (map.getZoom() < 4) map.flyTo({ center: flightCenter, zoom: 5, duration: 1000 })
+      if (firstFlightVisitRef.current) {
+        // 首次进入航班页:无论此前地图在哪,都以北京为起始视角
+        firstFlightVisitRef.current = false
+        setFlightCenter(BEIJING)
+        map.flyTo({ center: BEIJING, zoom: 5.5, duration: 1200 })
+      } else if (map.getZoom() < 4) {
+        map.flyTo({ center: flightCenter, zoom: 5, duration: 1000 })
+      }
     } else if (typhoon) {
       const pts = [...typhoon.track.map((p) => p.coord), ...Object.values(typhoon.forecasts).flat().map((p) => p.coord)]
       const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1])
