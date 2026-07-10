@@ -52,3 +52,26 @@ export const AGENCY_COLORS = {
   JMA: [99, 178, 255],
   JTWC: [140, 235, 140],
 }
+
+// 飞行高度 → 颜色(米):低空暖色 → 高空冷色,类 FR24
+export const ALT_STOPS = [
+  [0, [255, 207, 77]],
+  [3000, [124, 224, 122]],
+  [6000, [77, 163, 255]],
+  [9000, [143, 107, 255]],
+  [12000, [210, 77, 255]],
+]
+
+export function altColor(m) {
+  if (m == null) return [150, 155, 170] // 地面/未知
+  if (m <= ALT_STOPS[0][0]) return ALT_STOPS[0][1]
+  for (let i = 1; i < ALT_STOPS.length; i++) {
+    const [a, ca] = ALT_STOPS[i - 1]
+    const [b, cb] = ALT_STOPS[i]
+    if (m <= b) {
+      const t = (m - a) / (b - a)
+      return ca.map((v, j) => Math.round(v + (cb[j] - v) * t))
+    }
+  }
+  return ALT_STOPS[ALT_STOPS.length - 1][1]
+}

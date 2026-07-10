@@ -1,6 +1,8 @@
 # GeoPulse 🌐
 
-**台风 · 地震实时追踪可视化平台** — 对标并超越 [chinaupdated.com](https://chinaupdated.com/) 的开源灾害追踪站。
+**台风 · 地震 · 航班实时追踪可视化平台** — 对标并超越 [chinaupdated.com](https://chinaupdated.com/) 的开源灾害与交通追踪站。
+
+**在线访问:** https://geopulse.guofeng.me
 
 ![tech](https://img.shields.io/badge/React%2018-MapLibre%20GL-blue) ![deck.gl](https://img.shields.io/badge/deck.gl-9.x-purple)
 
@@ -23,6 +25,14 @@
 - 最小震级筛选、最新地震列表(点击定位)、海啸预警标记
 - 统计卡:总数 / 最大震级 / M5+ 数量 / 最近一次
 
+### ✈️ 航班追踪(类 Flightradar24)
+- 视野中心 463km 半径实时航班,**12s 自动刷新**,移动地图自动加载新区域
+- 飞机图标**按航向旋转**、按**飞行高度着色**(低空黄 → 高空紫,类 FR24)
+- 点击飞机:航班号 / 机型 / 注册号 / 高度 / 地速 / 航向 / 垂直速率 / 应答机码
+- **航路轨迹**:轮询累积绘制,按高度分段着色,追踪越久越完整
+- 搜索(航班号/注册号/机型)、按距离排序列表、紧急状态告警
+- 数据:adsb.lol + airplanes.live 社区 ADS-B 网络,全免费
+
 ## 快速开始
 
 ```bash
@@ -36,7 +46,10 @@ npm run build      # 产物在 dist/,纯静态可部署到任意托管
 | 模块 | 来源 | 说明 |
 |---|---|---|
 | 地震 | [USGS GeoJSON Feed](https://earthquake.usgs.gov/earthquakes/feed/) | 免费、支持 CORS、全球实时 |
-| 台风 | data.istrongcloud.com(浙江水利台风路径系统同源) | 无活跃台风或跨域受限时降级为演示数据 |
+| 台风 | data.istrongcloud.com(浙江水利台风路径系统同源) | 直连优先,Worker 代理兜底;无活跃台风时降级演示数据 |
+| 航班 | [adsb.lol](https://api.adsb.lol) / [airplanes.live](https://airplanes.live) | 社区 ADS-B 网络,经 Cloudflare Worker 代理(加 CORS + 12s 边缘缓存) |
+
+**数据代理:** `worker/` 目录是部署在 `geopulse-api.guofeng.me` 的 Cloudflare Worker,统一解决上游 CORS 限制并做边缘缓存(坐标取整到 0.5° 网格,所有用户共享缓存,保护免费上游)。部署:`cd worker && wrangler deploy`。
 
 > 信息仅供参考,请以官方预警为准。
 

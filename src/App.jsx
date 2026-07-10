@@ -3,10 +3,13 @@ import maplibregl from 'maplibre-gl'
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import { useEarthquakes } from './hooks/useEarthquakes.js'
 import { useTyphoons } from './hooks/useTyphoons.js'
+import { useFlights } from './hooks/useFlights.js'
 import { buildQuakeLayers, quakePulseLayers } from './layers/quakeLayers.js'
 import { buildTyphoonLayers, typhoonPulseLayers } from './layers/typhoonLayers.js'
+import { buildFlightLayers, flightPulseLayers } from './layers/flightLayers.js'
 import QuakePanel from './components/QuakePanel.jsx'
 import TyphoonPanel from './components/TyphoonPanel.jsx'
+import FlightPanel from './components/FlightPanel.jsx'
 import Legend from './components/Legend.jsx'
 import { fmtTime } from './utils/geo.js'
 import { TY_CATS } from './utils/scales.js'
@@ -32,6 +35,14 @@ function getTooltip({ object }) {
     return {
       html: `${head}<b>${cat}</b><br/>${fmtTime(object.time)}<br/>
         风速 ${object.wind} m/s${object.pressure ? ` · 气压 ${object.pressure} hPa` : ''}`,
+      style,
+    }
+  }
+  if (object.hex != null && object.callsign != null) {
+    return {
+      html: `<b>${object.callsign}</b>${object.type ? ` · ${object.type}` : ''}<br/>
+        ${object.onGround ? '地面' : object.altM != null ? `高度 ${object.altM} m` : ''}${object.speedKmh != null ? ` · ${object.speedKmh} km/h` : ''}<br/>
+        <span style="opacity:0.7">点击追踪航路</span>`,
       style,
     }
   }
@@ -72,6 +83,11 @@ export default function App() {
   const [speed, setSpeed] = useState(2)
   const [agencies, setAgencies] = useState({})
 
+  // ── 航班状态 ──
+  const [flightCenter, setFlightCenter] = useState([121.5, 31.2])
+  const fl = useFlights(flightCenter, mode === 'flight')
+  const [selectedFlight, setSelectedFlight] = useState(null)
+
   // 初始化地图
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -82,6 +98,15 @@ export default function App() {
       minZoom: 1,
     })
     map.on('load', () => setMapReady(true))
+    // 地图移动后更新航班查询中心(防抖)
+    let moveTimer
+    map.on('moveend', () => {
+      clearTimeout(moveTimer)
+      moveTimer = setTimeout(() => {
+        const c = map.getCenter()
+        setFlightCenter([c.lng, c.lat])
+      }, 700)
+    })
     const overlay = new MapboxOverlay({ interleaved: false, layers: [], getTooltip })
     map.addControl(overlay)
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
@@ -105,7 +130,7 @@ export default function App() {
 
   // 倒计时/相对时间时钟
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30000)
+    const t = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(t)
   }, [])
 
@@ -132,6 +157,8 @@ export default function App() {
     if (!map) return
     if (mode === 'quake') {
       map.flyTo({ center: [150, 8], zoom: 1.6, duration: 1200 })
+    } else if (mode === 'flight') {
+      if (map.getZoom() < 4) map.flyTo({ center: flightCenter, zoom: 5, duration: 1000 })
     } else if (typhoon) {
       const pts = [...typhoon.track.map((p) => p.coord), ...Object.values(typhoon.forecasts).flat().map((p) => p.coord)]
       const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1])
@@ -151,6 +178,12 @@ export default function App() {
     if (info?.index != null) { setPlaying(false); setTimeIdx(info.index) }
   }, [])
 
+  const onSelectFlight = useCallback((f) => {
+    setSelectedFlight(f.hex)
+    const map = mapRef.current
+    if (map && map.getZoom() < 6) map.flyTo({ center: f.coord, zoom: 6.5, duration: 800 })
+  }, [])
+
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
     if (mode === 'quake') {
@@ -159,8 +192,14 @@ export default function App() {
         onClick: (info) => info.object && onSelectQuake(info.object),
       })
     }
+    if (mode === 'flight') {
+      return buildFlightLayers({
+        flights: fl.flights, trails: fl.trails, selectedHex: selectedFlight, center: flightCenter,
+        onClick: (info) => info.object && onSelectFlight(info.object),
+      })
+    }
     return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
-  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint])
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, selectedFlight, flightCenter, onSelectFlight])
 
   // 脉冲动画源
   const pulseSource = useMemo(() => {
@@ -169,9 +208,13 @@ export default function App() {
       const recent = quakes.filter((q) => now - q.time < 24 * 3.6e6 && q.mag >= 4.5)
       return recent.length ? { type: 'quake', data: recent } : null
     }
+    if (mode === 'flight') {
+      const sel = fl.flights.find((f) => f.hex === selectedFlight)
+      return sel ? { type: 'flight', data: sel } : null
+    }
     const current = typhoon?.track[timeIdx]
     return current ? { type: 'typhoon', data: current } : null
-  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now])
+  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now, fl.flights, selectedFlight])
 
   // rAF 动画循环：直接更新 overlay，不触发 React 渲染
   useEffect(() => {
@@ -187,7 +230,9 @@ export default function App() {
         last = t
         const pulse = pulseSource.type === 'quake'
           ? quakePulseLayers(pulseSource.data, t)
-          : typhoonPulseLayers(pulseSource.data, t)
+          : pulseSource.type === 'flight'
+            ? flightPulseLayers(pulseSource.data, t)
+            : typhoonPulseLayers(pulseSource.data, t)
         overlay.setProps({ layers: [...layers, ...pulse] })
       }
       raf = requestAnimationFrame(loop)
@@ -196,8 +241,8 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [layers, pulseSource])
 
-  const updatedAt = mode === 'quake' ? eq.updatedAt : ty.updatedAt
-  const refresh = mode === 'quake' ? eq.refresh : ty.refresh
+  const updatedAt = mode === 'quake' ? eq.updatedAt : mode === 'flight' ? fl.updatedAt : ty.updatedAt
+  const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : ty.refresh
 
   return (
     <div className="app">
@@ -210,6 +255,7 @@ export default function App() {
         <nav className="tabs">
           <button className={mode === 'typhoon' ? 'tab active' : 'tab'} onClick={() => setMode('typhoon')}>🌀 台风</button>
           <button className={mode === 'quake' ? 'tab active' : 'tab'} onClick={() => setMode('quake')}>🌍 地震</button>
+          <button className={mode === 'flight' ? 'tab active' : 'tab'} onClick={() => setMode('flight')}>✈️ 航班</button>
         </nav>
         <div className="header-right">
           <select
@@ -234,6 +280,11 @@ export default function App() {
             quakes={quakes} params={quakeParams} setParams={setQuakeParams}
             selected={selectedQuake} onSelect={onSelectQuake}
             loading={eq.loading} error={eq.error} now={now}
+          />
+        ) : mode === 'flight' ? (
+          <FlightPanel
+            flights={fl.flights} selected={selectedFlight} onSelect={onSelectFlight}
+            loading={fl.loading} error={fl.error} updatedAt={fl.updatedAt} source={fl.source} now={now}
           />
         ) : (
           <TyphoonPanel

@@ -2,9 +2,27 @@ import { useEffect, useState, useCallback } from 'react'
 import { windToCat } from '../utils/scales.js'
 import { buildSampleTyphoon } from '../data/sampleTyphoon.js'
 
-// 实时数据源（浙江水利厅台风路径系统同源 CDN，允许跨域）
-const LIST_URL = 'https://data.istrongcloud.com/v2/data/complex/active.json'
-const DETAIL_URL = (id) => `https://data.istrongcloud.com/v2/data/complex/${id}.json`
+// 实时数据源（浙江水利厅台风路径系统同源 CDN，允许跨域）;Worker 代理兜底
+const LIST_URLS = [
+  'https://data.istrongcloud.com/v2/data/complex/active.json',
+  'https://geopulse-api.guofeng.me/typhoon/list',
+]
+const DETAIL_URLS = (id) => [
+  `https://data.istrongcloud.com/v2/data/complex/${id}.json`,
+  `https://geopulse-api.guofeng.me/typhoon/detail?id=${id}`,
+]
+
+async function fetchFirst(urls) {
+  let lastErr
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(10000) })
+      if (!r.ok) throw new Error(`${r.status}`)
+      return await r.json()
+    } catch (e) { lastErr = e }
+  }
+  throw lastErr || new Error('all sources failed')
+}
 
 const AGENCY_MAP = { 中国: 'CMA', 中央气象台: 'CMA', 日本: 'JMA', 美国: 'JTWC' }
 
@@ -91,16 +109,14 @@ export function useTyphoons() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(LIST_URL, { signal: AbortSignal.timeout(10000) })
-      if (!res.ok) throw new Error(`list ${res.status}`)
-      const list = await res.json()
+      const list = await fetchFirst(LIST_URLS)
       const active = (Array.isArray(list) ? list : []).filter((t) => t.tfid || t.id)
       if (!active.length) throw new Error('no-active')
       const details = await Promise.all(
         active.slice(0, 4).map(async (t) => {
-          const r = await fetch(DETAIL_URL(t.tfid ?? t.id), { signal: AbortSignal.timeout(10000) })
-          if (!r.ok) return null
-          return normalize(await r.json())
+          try {
+            return normalize(await fetchFirst(DETAIL_URLS(t.tfid ?? t.id)))
+          } catch { return null }
         })
       )
       const typhoons = details.filter(Boolean)

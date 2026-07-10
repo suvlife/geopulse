@@ -1,0 +1,7 @@
+name = "geopulse-api"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+
+routes = [
+  { pattern = "geopulse-api.guofeng.me", custom_domain = true }
+]
