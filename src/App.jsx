@@ -10,8 +10,7 @@ import TyphoonPanel from './components/TyphoonPanel.jsx'
 import Legend from './components/Legend.jsx'
 import { fmtTime } from './utils/geo.js'
 import { TY_CATS } from './utils/scales.js'
-
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+import { BASEMAPS, getBasemap, loadBasemapPref, saveBasemapPref, pickFastestBasemap } from './utils/basemaps.js'
 
 function getTooltip({ object }) {
   if (!object) return null
@@ -47,6 +46,11 @@ export default function App() {
   const [mode, setMode] = useState('typhoon')
   const [now, setNow] = useState(Date.now())
 
+  // ── 底图：本地偏好 → 默认腾讯（国内快），无偏好时后台测速自动切换 ──
+  const [basemapId, setBasemapId] = useState(() => loadBasemapPref() || 'tencent-dark')
+  const [mapReady, setMapReady] = useState(false)
+  const appliedBasemapRef = useRef(basemapId)
+
   // ── 地震状态 ──
   const [quakeParams, setQuakeParams] = useState({ range: 'day', minMag: 0, colorBy: 'mag', heatmap: false })
   const eq = useEarthquakes(quakeParams.range)
@@ -72,11 +76,12 @@ export default function App() {
   useEffect(() => {
     const map = new maplibregl.Map({
       container: mapEl.current,
-      style: MAP_STYLE,
+      style: getBasemap(appliedBasemapRef.current).style,
       center: [128, 22],
       zoom: 3.6,
       minZoom: 1,
     })
+    map.on('load', () => setMapReady(true))
     const overlay = new MapboxOverlay({ interleaved: false, layers: [], getTooltip })
     map.addControl(overlay)
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
@@ -85,8 +90,18 @@ export default function App() {
     overlayRef.current = overlay
     window.__map = map // 调试用
     window.__overlay = overlay
+    // 无手动偏好时测速选最快底图
+    if (!loadBasemapPref()) pickFastestBasemap().then((id) => setBasemapId(id))
     return () => map.remove()
   }, [])
+
+  // 底图切换
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || appliedBasemapRef.current === basemapId) return
+    appliedBasemapRef.current = basemapId
+    map.setStyle(getBasemap(basemapId).style)
+  }, [basemapId])
 
   // 倒计时/相对时间时钟
   useEffect(() => {
@@ -197,6 +212,14 @@ export default function App() {
           <button className={mode === 'quake' ? 'tab active' : 'tab'} onClick={() => setMode('quake')}>🌍 地震</button>
         </nav>
         <div className="header-right">
+          <select
+            className="basemap-select"
+            value={basemapId}
+            onChange={(e) => { setBasemapId(e.target.value); saveBasemapPref(e.target.value) }}
+            title="切换底图"
+          >
+            {BASEMAPS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
           <span className="pulse-dot" />
           <span className="updated">{updatedAt ? `更新于 ${fmtTime(updatedAt)}` : '加载中…'}</span>
           <button className="refresh-btn" onClick={refresh} title="立即刷新">⟳</button>
@@ -205,6 +228,7 @@ export default function App() {
 
       <div className="map-wrap">
         <div ref={mapEl} className="map" />
+        {!mapReady && <div className="map-loading"><span className="spinner" />底图加载中…</div>}
         {mode === 'quake' ? (
           <QuakePanel
             quakes={quakes} params={quakeParams} setParams={setQuakeParams}

@@ -63,6 +63,26 @@ body {
   100% { box-shadow: 0 0 0 0 rgba(53, 208, 127, 0); }
 }
 .updated { font-size: 12px; color: var(--text-dim); }
+.basemap-select {
+  background: rgba(255, 255, 255, 0.06); color: var(--text);
+  border: 1px solid var(--panel-border); border-radius: 8px;
+  font-size: 12px; padding: 5px 8px; cursor: pointer; outline: none;
+}
+.basemap-select option { background: #131829; }
+
+.map-loading {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 20px; padding: 7px 16px; font-size: 12px; color: var(--text-dim);
+  backdrop-filter: blur(10px); z-index: 15;
+}
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .refresh-btn {
   width: 30px; height: 30px; border-radius: 8px; font-size: 16px;
   border: 1px solid var(--panel-border); background: transparent;
