@@ -1,0 +1,227 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import maplibregl from 'maplibre-gl'
+import { MapboxOverlay } from '@deck.gl/mapbox'
+import { useEarthquakes } from './hooks/useEarthquakes.js'
+import { useTyphoons } from './hooks/useTyphoons.js'
+import { buildQuakeLayers, quakePulseLayers } from './layers/quakeLayers.js'
+import { buildTyphoonLayers, typhoonPulseLayers } from './layers/typhoonLayers.js'
+import QuakePanel from './components/QuakePanel.jsx'
+import TyphoonPanel from './components/TyphoonPanel.jsx'
+import Legend from './components/Legend.jsx'
+import { fmtTime } from './utils/geo.js'
+import { TY_CATS } from './utils/scales.js'
+
+const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
+function getTooltip({ object }) {
+  if (!object) return null
+  const style = {
+    background: 'rgba(12,16,30,0.92)', color: '#e8ecf6', fontSize: '12px',
+    padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)',
+    maxWidth: '260px',
+  }
+  if (object.place != null) {
+    return {
+      html: `<b>M${object.mag.toFixed(1)}</b> ${object.place}<br/>
+        ${fmtTime(object.time)} · 深度 ${object.depth.toFixed(0)} km${object.tsunami ? '<br/>⚠️ 伴随海啸预警' : ''}`,
+      style,
+    }
+  }
+  if (object.cat != null) {
+    const cat = TY_CATS[object.cat]?.label || object.cat
+    const head = object.agency ? `【${object.agency} 预报】` : ''
+    return {
+      html: `${head}<b>${cat}</b><br/>${fmtTime(object.time)}<br/>
+        风速 ${object.wind} m/s${object.pressure ? ` · 气压 ${object.pressure} hPa` : ''}`,
+      style,
+    }
+  }
+  return null
+}
+
+export default function App() {
+  const mapEl = useRef(null)
+  const mapRef = useRef(null)
+  const overlayRef = useRef(null)
+
+  const [mode, setMode] = useState('typhoon')
+  const [now, setNow] = useState(Date.now())
+
+  // ── 地震状态 ──
+  const [quakeParams, setQuakeParams] = useState({ range: 'day', minMag: 0, colorBy: 'mag', heatmap: false })
+  const eq = useEarthquakes(quakeParams.range)
+  const [selectedQuake, setSelectedQuake] = useState(null)
+  const quakes = useMemo(
+    () => eq.quakes.filter((q) => q.mag >= quakeParams.minMag),
+    [eq.quakes, quakeParams.minMag]
+  )
+
+  // ── 台风状态 ──
+  const ty = useTyphoons()
+  const [activeId, setActiveId] = useState(null)
+  const typhoon = useMemo(
+    () => ty.typhoons.find((t) => t.id === activeId) || ty.typhoons[0] || null,
+    [ty.typhoons, activeId]
+  )
+  const [timeIdx, setTimeIdx] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState(2)
+  const [agencies, setAgencies] = useState({})
+
+  // 初始化地图
+  useEffect(() => {
+    const map = new maplibregl.Map({
+      container: mapEl.current,
+      style: MAP_STYLE,
+      center: [128, 22],
+      zoom: 3.6,
+      minZoom: 1,
+    })
+    const overlay = new MapboxOverlay({ interleaved: false, layers: [], getTooltip })
+    map.addControl(overlay)
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
+    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right')
+    mapRef.current = map
+    overlayRef.current = overlay
+    window.__map = map // 调试用
+    window.__overlay = overlay
+    return () => map.remove()
+  }, [])
+
+  // 倒计时/相对时间时钟
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  // 台风数据到达 → 跳到最新位置
+  useEffect(() => {
+    if (typhoon) setTimeIdx(typhoon.track.length - 1)
+  }, [typhoon?.id, typhoon?.track.length])
+
+  // 回放推进
+  useEffect(() => {
+    if (!playing || !typhoon) return
+    const iv = setInterval(() => {
+      setTimeIdx((i) => {
+        if (i >= typhoon.track.length - 1) { setPlaying(false); return i }
+        return i + 1
+      })
+    }, 800 / speed)
+    return () => clearInterval(iv)
+  }, [playing, speed, typhoon])
+
+  // 模式切换 → 镜头
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (mode === 'quake') {
+      map.flyTo({ center: [150, 8], zoom: 1.6, duration: 1200 })
+    } else if (typhoon) {
+      const pts = [...typhoon.track.map((p) => p.coord), ...Object.values(typhoon.forecasts).flat().map((p) => p.coord)]
+      const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1])
+      map.fitBounds(
+        [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
+        { padding: { left: 400, right: 60, top: 80, bottom: 60 }, duration: 1200, maxZoom: 6 }
+      )
+    }
+  }, [mode, typhoon?.id])
+
+  const onSelectQuake = useCallback((q) => {
+    setSelectedQuake(q)
+    mapRef.current?.flyTo({ center: q.coord, zoom: 5.5, duration: 900 })
+  }, [])
+
+  const onClickTrackPoint = useCallback((info) => {
+    if (info?.index != null) { setPlaying(false); setTimeIdx(info.index) }
+  }, [])
+
+  // 构建静态图层（不含动画帧）
+  const layers = useMemo(() => {
+    if (mode === 'quake') {
+      return buildQuakeLayers({
+        quakes, colorBy: quakeParams.colorBy, heatmap: quakeParams.heatmap,
+        onClick: (info) => info.object && onSelectQuake(info.object),
+      })
+    }
+    return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint])
+
+  // 脉冲动画源
+  const pulseSource = useMemo(() => {
+    if (mode === 'quake') {
+      if (quakeParams.heatmap) return null
+      const recent = quakes.filter((q) => now - q.time < 24 * 3.6e6 && q.mag >= 4.5)
+      return recent.length ? { type: 'quake', data: recent } : null
+    }
+    const current = typhoon?.track[timeIdx]
+    return current ? { type: 'typhoon', data: current } : null
+  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now])
+
+  // rAF 动画循环：直接更新 overlay，不触发 React 渲染
+  useEffect(() => {
+    const overlay = overlayRef.current
+    if (!overlay) return
+    // 静态图层立即应用（rAF 在后台标签页会被节流，不能依赖它做首次渲染）
+    overlay.setProps({ layers })
+    if (!pulseSource) return
+    let raf, last = 0
+    const loop = (t) => {
+      // window.__animPaused: 测试/截图时暂停动画,让渲染管线进入空闲
+      if (!window.__animPaused && t - last > 66) {
+        last = t
+        const pulse = pulseSource.type === 'quake'
+          ? quakePulseLayers(pulseSource.data, t)
+          : typhoonPulseLayers(pulseSource.data, t)
+        overlay.setProps({ layers: [...layers, ...pulse] })
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [layers, pulseSource])
+
+  const updatedAt = mode === 'quake' ? eq.updatedAt : ty.updatedAt
+  const refresh = mode === 'quake' ? eq.refresh : ty.refresh
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="brand">
+          <span className="brand-logo">🌐</span>
+          <span className="brand-name">GeoPulse</span>
+          <span className="brand-sub">台风 · 地震实时追踪</span>
+        </div>
+        <nav className="tabs">
+          <button className={mode === 'typhoon' ? 'tab active' : 'tab'} onClick={() => setMode('typhoon')}>🌀 台风</button>
+          <button className={mode === 'quake' ? 'tab active' : 'tab'} onClick={() => setMode('quake')}>🌍 地震</button>
+        </nav>
+        <div className="header-right">
+          <span className="pulse-dot" />
+          <span className="updated">{updatedAt ? `更新于 ${fmtTime(updatedAt)}` : '加载中…'}</span>
+          <button className="refresh-btn" onClick={refresh} title="立即刷新">⟳</button>
+        </div>
+      </header>
+
+      <div className="map-wrap">
+        <div ref={mapEl} className="map" />
+        {mode === 'quake' ? (
+          <QuakePanel
+            quakes={quakes} params={quakeParams} setParams={setQuakeParams}
+            selected={selectedQuake} onSelect={onSelectQuake}
+            loading={eq.loading} error={eq.error} now={now}
+          />
+        ) : (
+          <TyphoonPanel
+            typhoons={ty.typhoons} activeId={typhoon?.id} setActiveId={setActiveId} typhoon={typhoon}
+            timeIdx={timeIdx} setTimeIdx={setTimeIdx}
+            playing={playing} setPlaying={setPlaying} speed={speed} setSpeed={setSpeed}
+            agencies={agencies} setAgencies={setAgencies}
+            source={ty.source} now={now}
+          />
+        )}
+        <Legend mode={mode} colorBy={quakeParams.colorBy} />
+      </div>
+    </div>
+  )
+}
