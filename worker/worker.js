@@ -2,7 +2,9 @@
 // /flights?lat=&lon=&dist=   实时航班(adsb.lol 主源,airplanes.live 兜底,缓存 12s)
 //                            缓存未命中时"搭便车"把区域内所有飞机位置记入 KV(写入节流 150s)
 // /trail?icao24=&lat=&lon=   服务端历史轨迹(KV,只要有访客看过该区域就有积累)
-// /typhoon/list              活跃台风列表(istrongcloud,缓存 300s)
+// /route?callsign=           航线信息:航司/起降机场(adsbdb,缓存 24h)
+// /photo?hex=                飞机照片(planespotters 要求合规 UA,必须代理,缓存 24h)
+// /typhoon/list              当年台风列表(istrongcloud 年度文件,active.json 已下线,缓存 300s)
 // /typhoon/detail?id=        台风详情(istrongcloud,缓存 300s)
 
 const CORS = {
@@ -31,7 +33,7 @@ async function cachedProxy(upstreamUrl, ttl, ctx, fallbackUrl = null) {
   let up
   try {
     up = await fetch(upstreamUrl, {
-      headers: { 'User-Agent': 'GeoPulse/1.0 (github.com/suvlife/geopulse)' },
+      headers: { 'User-Agent': 'GeoPulse/1.0 (+https://geopulse.guofeng.me)' },
       signal: AbortSignal.timeout(9000),
     })
     if (!up.ok && fallbackUrl) throw new Error(`upstream ${up.status}`)
@@ -39,7 +41,7 @@ async function cachedProxy(upstreamUrl, ttl, ctx, fallbackUrl = null) {
     if (!fallbackUrl) return json({ error: String(e) }, 502)
     try {
       up = await fetch(fallbackUrl, {
-        headers: { 'User-Agent': 'GeoPulse/1.0' },
+        headers: { 'User-Agent': 'GeoPulse/1.0 (+https://geopulse.guofeng.me)' },
         signal: AbortSignal.timeout(9000),
       })
     } catch (e2) {
@@ -148,8 +150,21 @@ export default {
       return json({ icao24: icao, path: blob?.planes?.[icao] || [], updated: blob?.updated || null })
     }
 
+    if (p === '/route') {
+      const cs = (url.searchParams.get('callsign') || '').trim().toUpperCase()
+      if (!/^[A-Z0-9]{3,8}$/.test(cs)) return json({ error: 'bad callsign' }, 400)
+      return cachedProxy(`https://api.adsbdb.com/v0/callsign/${cs}`, 86400, ctx)
+    }
+
+    if (p === '/photo') {
+      const hex = (url.searchParams.get('hex') || '').toLowerCase()
+      if (!/^~?[0-9a-f]{6}$/.test(hex)) return json({ error: 'bad hex' }, 400)
+      return cachedProxy(`https://api.planespotters.net/pub/photos/hex/${hex}`, 86400, ctx)
+    }
+
     if (p === '/typhoon/list') {
-      return cachedProxy('https://data.istrongcloud.com/v2/data/complex/active.json', 300, ctx)
+      const year = new Date().getFullYear()
+      return cachedProxy(`https://data.istrongcloud.com/v2/data/complex/${year}.json`, 300, ctx)
     }
 
     if (p === '/typhoon/detail') {
@@ -158,6 +173,6 @@ export default {
       return cachedProxy(`https://data.istrongcloud.com/v2/data/complex/${id}.json`, 300, ctx)
     }
 
-    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/typhoon/list', '/typhoon/detail'] }, p === '/' ? 200 : 404)
+    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail'] }, p === '/' ? 200 : 404)
   },
 }

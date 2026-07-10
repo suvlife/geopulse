@@ -3,7 +3,7 @@ import { TY_CATS, catColor, AGENCY_COLORS } from '../utils/scales.js'
 import { cityImpact, fmtCountdown, fmtTime } from '../utils/geo.js'
 import { CITIES } from '../data/sampleTyphoon.js'
 
-const AGENCY_NAMES = { CMA: '中央气象台', JMA: '日本气象厅', JTWC: '美国联合警报中心' }
+const AGENCY_NAMES = { CMA: '中央气象台', JMA: '日本气象厅', JTWC: '美国 JTWC', HKO: '香港天文台', KMA: '韩国气象厅', CWA: '台湾气象署' }
 
 const GUIDES = [
   { icon: '🏠', title: '居家防护', tips: ['关紧门窗，加固易被吹动的搭建物', '阳台花盆、杂物移入室内', '储备 3 天饮用水、食品、照明和充电宝'] },
@@ -39,7 +39,7 @@ export default function TyphoonPanel({
       <div className="panel-title">
         🌀 台风追踪
         <span className={source === 'live' ? 'badge live' : 'badge demo'}>
-          {source === 'live' ? '实时数据' : '演示数据'}
+          {source === 'live' ? '实时数据' : source === 'history' ? '近期台风(已停编)' : '演示数据'}
         </span>
       </div>
 

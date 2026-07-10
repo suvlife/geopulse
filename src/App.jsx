@@ -87,6 +87,7 @@ export default function App() {
   const [flightCenter, setFlightCenter] = useState([121.5, 31.2])
   const fl = useFlights(flightCenter, mode === 'flight')
   const [selectedFlight, setSelectedFlight] = useState(null)
+  const [flightInfo, setFlightInfo] = useState(null) // { route, photo }
 
   // 初始化地图
   useEffect(() => {
@@ -180,10 +181,12 @@ export default function App() {
 
   const onSelectFlight = useCallback((f) => {
     setSelectedFlight(f.hex)
+    setFlightInfo(null)
     fl.loadServerTrail(f.hex)
+    fl.loadFlightInfo(f.hex, f.callsign).then(setFlightInfo)
     const map = mapRef.current
     if (map && map.getZoom() < 6) map.flyTo({ center: f.coord, zoom: 6.5, duration: 800 })
-  }, [fl.loadServerTrail])
+  }, [fl.loadServerTrail, fl.loadFlightInfo])
 
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
@@ -195,12 +198,13 @@ export default function App() {
     }
     if (mode === 'flight') {
       return buildFlightLayers({
-        flights: fl.flights, trails: fl.trails, selectedHex: selectedFlight, center: flightCenter,
+        flights: fl.flights, trails: fl.trails, selectedHex: selectedFlight,
+        selectedRoute: flightInfo?.route || null, center: flightCenter,
         onClick: (info) => info.object && onSelectFlight(info.object),
       })
     }
     return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
-  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightCenter, onSelectFlight])
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightInfo, flightCenter, onSelectFlight])
 
   // 脉冲动画源
   const pulseSource = useMemo(() => {
@@ -284,7 +288,7 @@ export default function App() {
           />
         ) : mode === 'flight' ? (
           <FlightPanel
-            flights={fl.flights} selected={selectedFlight} onSelect={onSelectFlight}
+            flights={fl.flights} selected={selectedFlight} onSelect={onSelectFlight} flightInfo={flightInfo}
             loading={fl.loading} error={fl.error} updatedAt={fl.updatedAt} source={fl.source} now={now}
           />
         ) : (

@@ -2,15 +2,18 @@ import { useEffect, useState, useCallback } from 'react'
 import { windToCat } from '../utils/scales.js'
 import { buildSampleTyphoon } from '../data/sampleTyphoon.js'
 
-// 实时数据源（浙江水利厅台风路径系统同源 CDN，允许跨域）;Worker 代理兜底
+// istrongcloud 年度文件(active.json 已下线);直连优先,Worker 代理兜底
+const YEAR = new Date().getFullYear()
 const LIST_URLS = [
-  'https://data.istrongcloud.com/v2/data/complex/active.json',
+  `https://data.istrongcloud.com/v2/data/complex/${YEAR}.json`,
   'https://geopulse-api.guofeng.me/typhoon/list',
 ]
 const DETAIL_URLS = (id) => [
   `https://data.istrongcloud.com/v2/data/complex/${id}.json`,
   `https://geopulse-api.guofeng.me/typhoon/detail?id=${id}`,
 ]
+
+const AGENCY_MAP = { 中国: 'CMA', 中央气象台: 'CMA', 日本: 'JMA', 美国: 'JTWC', 中国香港: 'HKO', 韩国: 'KMA', 中国台湾: 'CWA' }
 
 async function fetchFirst(urls) {
   let lastErr
@@ -24,25 +27,30 @@ async function fetchFirst(urls) {
   throw lastErr || new Error('all sources failed')
 }
 
-const AGENCY_MAP = { 中国: 'CMA', 中央气象台: 'CMA', 日本: 'JMA', 美国: 'JTWC' }
-
 function parseTime(s) {
   if (typeof s === 'number') return s
   return new Date(String(s).replace(' ', 'T') + '+08:00').getTime()
 }
 
-function parseRadii(s) {
-  if (!s || s === '0') return null
-  const parts = String(s).split('|').map(Number)
-  if (parts.length !== 4 || parts.every((v) => !v)) return null
-  const [ne, se, sw, nw] = parts
-  return { ne, se, sw, nw }
+// 风圈:优先 *_quad 四象限对象 {ne,se,sw,nw},退化为等半径
+function parseRadii(quad, single) {
+  if (quad && typeof quad === 'object') {
+    const { ne, se, sw, nw } = quad
+    if (ne || se || sw || nw) return { ne: +ne || 0, se: +se || 0, sw: +sw || 0, nw: +nw || 0 }
+  }
+  const r = Number(single)
+  if (r > 0) return { ne: r, se: r, sw: r, nw: r }
+  return null
 }
 
 function parseCat(strong, wind) {
   if (strong) {
     const m = String(strong).match(/\((\w+)\)/)
-    if (m) return m[1]
+    if (m) {
+      const code = m[1]
+      if (code === 'SuperTY' || code === 'Super TY') return 'SuperTY'
+      if (['TD', 'TS', 'STS', 'TY', 'STY'].includes(code)) return code
+    }
     if (/超强台风/.test(strong)) return 'SuperTY'
     if (/强台风/.test(strong)) return 'STY'
     if (/^台风/.test(strong)) return 'TY'
@@ -64,20 +72,23 @@ function normalize(raw) {
       wind,
       pressure: Number(p.pressure) || null,
       power: Number(p.power) || null,
-      moveSpeed: Number(p.movespeed ?? p.moveSpeed) || null,
-      moveDir: p.movedirection ?? p.moveDirection ?? '',
+      moveSpeed: Number(p.move_speed ?? p.movespeed) || null,
+      moveDir: p.move_dir ?? p.movedirection ?? '',
       cat: parseCat(p.strong, wind),
-      r7: parseRadii(p.radius7),
-      r10: parseRadii(p.radius10),
-      r12: parseRadii(p.radius12),
+      r7: parseRadii(p.radius7_quad, p.radius7),
+      r10: parseRadii(p.radius10_quad, p.radius10),
+      r12: parseRadii(p.radius12_quad, p.radius12),
     }
   })
-  // 预报可能挂在最后一个观测点或对象顶层
-  const fcRaw = obj.points[obj.points.length - 1]?.forecast || obj.forecast || []
+  // 预报挂在最后一个带 forecast 的观测点;机构名在 sets 字段
+  let fcRaw = []
+  for (let i = obj.points.length - 1; i >= 0; i--) {
+    if (obj.points[i].forecast?.length) { fcRaw = obj.points[i].forecast; break }
+  }
   const forecasts = {}
   for (const f of fcRaw) {
-    const agency = AGENCY_MAP[f.tm] || f.tm || '其他'
-    const pts = (f.forecastpoints || f.points || []).map((p) => {
+    const agency = AGENCY_MAP[f.sets ?? f.tm] || f.sets || f.tm || '其他'
+    const pts = (f.points || f.forecastpoints || []).map((p) => {
       const wind = Number(p.speed) || 0
       return {
         time: parseTime(p.time),
@@ -90,10 +101,11 @@ function normalize(raw) {
     if (pts.length) forecasts[agency] = pts
   }
   return {
-    id: String(obj.tfid ?? obj.id),
-    name: obj.name || obj.enname,
-    enname: obj.enname || '',
-    no: String(obj.tfid ?? '').slice(-4),
+    id: String(obj.tfbh ?? obj.ident ?? obj.id),
+    name: obj.name || obj.ename,
+    enname: obj.ename || '',
+    no: String(obj.tfbh ?? obj.ident ?? '').slice(-4),
+    active: obj.is_current === 1,
     track,
     forecasts,
   }
@@ -102,7 +114,7 @@ function normalize(raw) {
 export function useTyphoons() {
   const [state, setState] = useState({
     typhoons: [],
-    source: 'loading', // 'live' | 'sample' | 'loading'
+    source: 'loading', // 'live' | 'history' | 'sample' | 'loading'
     error: null,
     updatedAt: null,
   })
@@ -110,24 +122,27 @@ export function useTyphoons() {
   const load = useCallback(async () => {
     try {
       const list = await fetchFirst(LIST_URLS)
-      const active = (Array.isArray(list) ? list : []).filter((t) => t.tfid || t.id)
-      if (!active.length) throw new Error('no-active')
+      const all = (Array.isArray(list) ? list : []).filter((t) => t.tfbh || t.ident)
+      if (!all.length) throw new Error('empty-list')
+      // 活跃台风优先;都结束了则取最近 2 个供回看
+      const current = all.filter((t) => t.is_current === 1)
+      const wanted = current.length ? current : all.slice(0, 2)
       const details = await Promise.all(
-        active.slice(0, 4).map(async (t) => {
+        wanted.slice(0, 4).map(async (t) => {
           try {
-            return normalize(await fetchFirst(DETAIL_URLS(t.tfid ?? t.id)))
+            return normalize(await fetchFirst(DETAIL_URLS(t.tfbh ?? t.ident)))
           } catch { return null }
         })
       )
       const typhoons = details.filter(Boolean)
       if (!typhoons.length) throw new Error('no-detail')
-      setState({ typhoons, source: 'live', error: null, updatedAt: Date.now() })
+      setState({ typhoons, source: current.length ? 'live' : 'history', error: null, updatedAt: Date.now() })
     } catch (e) {
-      // 数据源不可达或当前无活跃台风 → 演示数据兜底，页面始终可用
+      // 数据源全部不可达 → 演示数据兜底,页面始终可用
       setState({
         typhoons: [buildSampleTyphoon()],
         source: 'sample',
-        error: e.message === 'no-active' ? null : e.message,
+        error: e.message,
         updatedAt: Date.now(),
       })
     }

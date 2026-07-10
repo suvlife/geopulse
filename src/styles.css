@@ -228,6 +228,27 @@ input[type='range']::-webkit-slider-thumb {
   color: var(--text-dim); margin-bottom: 2px;
 }
 
+.plane-photo { display: block; margin-top: 10px; position: relative; border-radius: 10px; overflow: hidden; }
+.plane-photo img { width: 100%; display: block; max-height: 170px; object-fit: cover; }
+.photo-credit {
+  position: absolute; right: 0; bottom: 0;
+  font-size: 9.5px; color: rgba(255, 255, 255, 0.85);
+  background: rgba(10, 14, 26, 0.72); padding: 3px 8px; border-top-left-radius: 8px;
+}
+
+.airline-row { margin-top: 10px; font-size: 13.5px; }
+.airline-country { color: var(--text-dim); font-size: 12px; }
+
+.route-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--panel-border);
+  border-radius: 10px; padding: 10px 12px;
+}
+.route-airport { flex: 1; min-width: 0; }
+.route-code { font-size: 16px; font-weight: 800; }
+.route-city { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.45; }
+.route-arrow { color: var(--accent); font-size: 15px; flex-shrink: 0; }
+
 /* ── 台风面板 ─────────────────────── */
 .ty-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .ty-name { font-size: 20px; font-weight: 800; }

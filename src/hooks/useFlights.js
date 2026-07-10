@@ -103,5 +103,66 @@ export function useFlights(center, enabled) {
     // centerKey 变化(0.5° 网格)时立即重拉,与 Worker 缓存粒度一致
   }, [enabled, load, Math.round(center[0] * 2) / 2, Math.round(center[1] * 2) / 2])
 
-  return { ...state, trails: trailsRef.current, refresh: load, loadServerTrail }
+  // 选中飞机 → 航线信息(航司/起降机场,adsbdb 直连优先 Worker 兜底)+ 照片(必须走 Worker,planespotters 要求合规 UA)
+  const loadFlightInfo = useCallback(async (hex, callsign) => {
+    const cs = (callsign || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const out = { route: null, photo: null }
+    const jobs = []
+    if (/^[A-Z0-9]{3,8}$/.test(cs)) {
+      jobs.push(
+        (async () => {
+          try {
+            let d
+            try {
+              const r = await fetch(`https://api.adsbdb.com/v0/callsign/${cs}`, { signal: AbortSignal.timeout(9000) })
+              if (!r.ok) throw new Error(`${r.status}`)
+              d = await r.json()
+            } catch {
+              const r = await fetch(`${API}/route?callsign=${cs}`, { signal: AbortSignal.timeout(9000) })
+              if (!r.ok) return
+              d = await r.json()
+            }
+            const fr = d?.response?.flightroute
+            if (!fr) return
+            out.route = {
+              airline: fr.airline?.name || null,
+              airlineCountry: fr.airline?.country || null,
+              airlineIata: fr.airline?.iata || null,
+              origin: fr.origin ? {
+                name: fr.origin.name, iata: fr.origin.iata_code, icao: fr.origin.icao_code,
+                city: fr.origin.municipality, country: fr.origin.country_name,
+                coord: [fr.origin.longitude, fr.origin.latitude],
+              } : null,
+              destination: fr.destination ? {
+                name: fr.destination.name, iata: fr.destination.iata_code, icao: fr.destination.icao_code,
+                city: fr.destination.municipality, country: fr.destination.country_name,
+                coord: [fr.destination.longitude, fr.destination.latitude],
+              } : null,
+            }
+          } catch { /* 包机/军机等查不到航线,静默 */ }
+        })()
+      )
+    }
+    jobs.push(
+      (async () => {
+        try {
+          const r = await fetch(`${API}/photo?hex=${hex}`, { signal: AbortSignal.timeout(9000) })
+          if (!r.ok) return
+          const d = await r.json()
+          const p = (d.photos || [])[0]
+          if (p) {
+            out.photo = {
+              src: p.thumbnail_large?.src || p.thumbnail?.src || null,
+              link: p.link || null,
+              photographer: p.photographer || null,
+            }
+          }
+        } catch { /* 无照片静默 */ }
+      })()
+    )
+    await Promise.all(jobs)
+    return out
+  }, [])
+
+  return { ...state, trails: trailsRef.current, refresh: load, loadServerTrail, loadFlightInfo }
 }

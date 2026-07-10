@@ -6,7 +6,7 @@ function fmtAgo(t, now) {
   return s < 5 ? '刚刚' : `${s}s 前`
 }
 
-export default function FlightPanel({ flights, selected, onSelect, loading, error, updatedAt, source, now }) {
+export default function FlightPanel({ flights, selected, onSelect, flightInfo, loading, error, updatedAt, source, now }) {
   const [query, setQuery] = useState('')
 
   const filtered = useMemo(() => {
@@ -72,6 +72,39 @@ export default function FlightPanel({ flights, selected, onSelect, loading, erro
             </span>
             <span className="detail-place">{sel.type || '未知机型'}{sel.reg ? ` · ${sel.reg}` : ''}</span>
           </div>
+
+          {flightInfo?.photo?.src && (
+            <a href={flightInfo.photo.link || '#'} target="_blank" rel="noreferrer" className="plane-photo">
+              <img src={flightInfo.photo.src} alt={sel.callsign} loading="lazy" />
+              {flightInfo.photo.photographer && <span className="photo-credit">📷 {flightInfo.photo.photographer} · planespotters.net</span>}
+            </a>
+          )}
+
+          {flightInfo?.route?.airline && (
+            <div className="airline-row">
+              <b>{flightInfo.route.airline}</b>
+              {flightInfo.route.airlineIata ? ` (${flightInfo.route.airlineIata})` : ''}
+              {flightInfo.route.airlineCountry && <span className="airline-country"> · {flightInfo.route.airlineCountry}</span>}
+            </div>
+          )}
+
+          {flightInfo?.route?.origin && flightInfo?.route?.destination && (
+            <div className="route-row">
+              <div className="route-airport">
+                <div className="route-code">🛫 {flightInfo.route.origin.iata || flightInfo.route.origin.icao}</div>
+                <div className="route-city">{flightInfo.route.origin.city}<br />{flightInfo.route.origin.country}</div>
+              </div>
+              <div className="route-arrow">✈</div>
+              <div className="route-airport" style={{ textAlign: 'right' }}>
+                <div className="route-code">{flightInfo.route.destination.iata || flightInfo.route.destination.icao} 🛬</div>
+                <div className="route-city">{flightInfo.route.destination.city}<br />{flightInfo.route.destination.country}</div>
+              </div>
+            </div>
+          )}
+          {flightInfo && !flightInfo.route && (
+            <div className="detail-meta">未查询到航线信息(包机/公务机/军机常无公开航线)</div>
+          )}
+
           {sel.emergency && <div className="error-tip" style={{ marginTop: 8 }}>⚠️ 紧急状态:{sel.emergency}</div>}
           <div className="flight-detail-grid">
             <div><i>高度</i>{sel.onGround ? '地面' : sel.altM != null ? `${sel.altM} m` : '—'}</div>
@@ -81,7 +114,7 @@ export default function FlightPanel({ flights, selected, onSelect, loading, erro
             <div><i>应答机</i>{sel.squawk || '—'}</div>
             <div><i>ICAO24</i>{sel.hex.toUpperCase()}</div>
           </div>
-          <div className="detail-meta">位置更新:{fmtAgo(sel.time, now)} · 轨迹随追踪时间增长</div>
+          <div className="detail-meta">位置更新:{fmtAgo(sel.time, now)}</div>
         </div>
       )}
 
