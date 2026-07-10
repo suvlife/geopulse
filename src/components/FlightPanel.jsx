@@ -113,7 +113,7 @@ export default function FlightPanel({ flights, selected, onSelect, loading, erro
       </div>
 
       <div className="foot-note">
-        数据:adsb.lol / airplanes.live 社区 ADS-B 网络(免费)· 覆盖:视野中心 463km 半径(虚线圈),移动地图自动加载 · 12s 刷新 · 航路轨迹为轮询累积,选中后持续追踪可见完整航路
+        数据:adsb.lol / airplanes.live 社区 ADS-B 网络(免费)· 覆盖:视野中心 463km 半径(虚线圈),移动地图自动加载 · 12s 刷新 · 选中飞机自动拉取服务端历史轨迹(KV 持续记录,有访客浏览过的区域即有积累)+ 本地实时累积
       </div>
     </div>
   )

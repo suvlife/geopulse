@@ -31,7 +31,7 @@ function normalize(d) {
 }
 
 export function useFlights(center, enabled) {
-  const [state, setState] = useState({ flights: [], loading: false, error: null, updatedAt: null, source: null })
+  const [state, setState] = useState({ flights: [], loading: false, error: null, updatedAt: null, source: null, trailsVersion: 0 })
   const trailsRef = useRef(new Map()) // hex → [{coord, altM, time}]
   const centerRef = useRef(center)
   centerRef.current = center
@@ -74,7 +74,24 @@ export function useFlights(center, enabled) {
     for (const [hex, arr] of trails) {
       if (!seen.has(hex) && now - arr[arr.length - 1].time > 600000) trails.delete(hex)
     }
-    setState({ flights, loading: false, error: null, updatedAt: now, source })
+    setState((s) => ({ flights, loading: false, error: null, updatedAt: now, source, trailsVersion: s.trailsVersion + 1 }))
+  }, [])
+
+  // 选中飞机时拉取服务端 KV 历史轨迹,与本地累积合并(服务端点更早,补齐选中前的航路)
+  const loadServerTrail = useCallback(async (hex) => {
+    try {
+      const [lon, lat] = centerRef.current
+      const r = await fetch(`${API}/trail?icao24=${hex}&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`, { signal: AbortSignal.timeout(10000) })
+      if (!r.ok) return
+      const d = await r.json()
+      const pts = (d.path || []).map(([t, lo, la, alt]) => ({ coord: [lo, la], altM: alt ?? null, time: t * 1000 }))
+      if (!pts.length) return
+      const merged = [...pts, ...(trailsRef.current.get(hex) || [])]
+        .sort((a, b) => a.time - b.time)
+        .filter((p, i, xs) => i === 0 || p.time !== xs[i - 1].time)
+      trailsRef.current.set(hex, merged.slice(-200))
+      setState((s) => ({ ...s, trailsVersion: s.trailsVersion + 1 }))
+    } catch { /* 服务端暂无该区域轨迹时静默 */ }
   }, [])
 
   useEffect(() => {
@@ -86,5 +103,5 @@ export function useFlights(center, enabled) {
     // centerKey 变化(0.5° 网格)时立即重拉,与 Worker 缓存粒度一致
   }, [enabled, load, Math.round(center[0] * 2) / 2, Math.round(center[1] * 2) / 2])
 
-  return { ...state, trails: trailsRef.current, refresh: load }
+  return { ...state, trails: trailsRef.current, refresh: load, loadServerTrail }
 }

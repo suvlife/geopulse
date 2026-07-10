@@ -5,3 +5,7 @@ compatibility_date = "2026-07-01"
 routes = [
   { pattern = "geopulse-api.guofeng.me", custom_domain = true }
 ]
+
+[[kv_namespaces]]
+binding = "TRAILS"
+id = "2167fdb496af412cafe56adb0c47b0d1"

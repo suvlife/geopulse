@@ -180,9 +180,10 @@ export default function App() {
 
   const onSelectFlight = useCallback((f) => {
     setSelectedFlight(f.hex)
+    fl.loadServerTrail(f.hex)
     const map = mapRef.current
     if (map && map.getZoom() < 6) map.flyTo({ center: f.coord, zoom: 6.5, duration: 800 })
-  }, [])
+  }, [fl.loadServerTrail])
 
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
@@ -199,7 +200,7 @@ export default function App() {
       })
     }
     return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
-  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, selectedFlight, flightCenter, onSelectFlight])
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightCenter, onSelectFlight])
 
   // 脉冲动画源
   const pulseSource = useMemo(() => {
