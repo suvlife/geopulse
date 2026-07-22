@@ -60,10 +60,41 @@ export function getGlobeView() {
   return new _GlobeView({ id: 'globe', resolution: 10 })
 }
 
-export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleGroups, showFootprint, frame }) {
+// 判断轨道点是否在相机朝向的一侧(中心角 < 90° 为近侧)
+function isNearSide(lon, lat, camLon, camLat) {
+  const la1 = (camLat * Math.PI) / 180
+  const la2 = (lat * Math.PI) / 180
+  const dLon = ((lon - camLon) * Math.PI) / 180
+  const cosc = Math.sin(la1) * Math.sin(la2) + Math.cos(la1) * Math.cos(la2) * Math.cos(dLon)
+  return cosc > 0
+}
+
+// 把轨道按近/远侧拆成若干段,近侧亮远侧暗,避免远侧穿透地球的视觉混乱
+function splitOrbitByVisibility(path, camLon, camLat) {
+  const near = [], far = []
+  let cur = null
+  for (let i = 0; i < path.length; i++) {
+    const [lon, lat, alt] = path[i]
+    const side = isNearSide(lon, lat, camLon, camLat) ? 'near' : 'far'
+    if (cur && cur.side !== side) {
+      // 切换侧时把当前点也加入上一段结尾,保证连续
+      cur.points.push([lon, lat, alt])
+      ;(cur.side === 'near' ? near : far).push(cur.points)
+      cur = { side, points: [[lon, lat, alt]] }
+    } else if (cur) {
+      cur.points.push([lon, lat, alt])
+    } else {
+      cur = { side, points: [[lon, lat, alt]] }
+    }
+  }
+  if (cur && cur.points.length) (cur.side === 'near' ? near : far).push(cur.points)
+  return { near, far }
+}
+
+export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleGroups, showFootprint, frame, camera }) {
   const layers = []
 
-  // 地球纹理
+  // 地球纹理:必须写深度,否则远侧轨道会穿透地球可见
   layers.push(
     new TileLayer({
       id: 'globe-tiles',
@@ -71,12 +102,14 @@ export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleG
       minZoom: 0,
       maxZoom: 9,
       tileSize: 256,
+      parameters: { depthWriteEnabled: true, depthTest: true },
       renderSubLayers: (props) => {
         const { bbox: { west, south, east, north } } = props.tile
         return new BitmapLayer(props, {
           data: null,
           image: props.data,
           bounds: [west, south, east, north],
+          parameters: { depthWriteEnabled: true, depthTest: true },
         })
       },
       onTileError: () => {},
@@ -88,19 +121,22 @@ export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleG
   // 分组过滤 + 按组着色
   const visible = satellites.filter((s) => visibleGroups[s.group] !== false && s.alt > 0)
 
-  // 选中卫星:完整轨道线
+  // 选中卫星:完整轨道线(近侧亮、远侧暗)
   if (selected && orbitPath?.length > 1) {
-    layers.push(
-      new PathLayer({
-        id: 'sel-orbit',
-        data: [{ path: orbitPath }],
-        getPath: (d) => d.path,
-        getColor: [255, 255, 255, 200],
-        getWidth: 1.6,
-        widthUnits: 'pixels',
-        jointRounded: true,
-      })
-    )
+    const cam = camera || { lon: selected.lon, lat: selected.lat }
+    const { near, far } = splitOrbitByVisibility(orbitPath, cam.lon, cam.lat)
+    const mk = (segments, color, widthPx) => segments.map((seg, i) => new PathLayer({
+      id: `sel-orbit-${color[3] > 100 ? 'near' : 'far'}-${i}`,
+      data: [{ path: seg }],
+      getPath: (d) => d.path,
+      getColor: color,
+      getWidth: widthPx,
+      widthUnits: 'pixels',
+      jointRounded: true,
+      parameters: { depthTest: true, depthWriteEnabled: false },
+    }))
+    layers.push(...mk(far, [255, 255, 255, 60], 1.2))
+    layers.push(...mk(near, [255, 255, 255, 230], 2))
   }
 
   // 选中卫星覆盖圈

@@ -257,12 +257,20 @@ export function useSatellites(enabled) {
     const t0 = simRef.current.time
     const periodMs = rec.satrec.no ? (2 * Math.PI / rec.satrec.no) * 60000 : 90 * 60000
     const path = []
+    let prevLon = null
     for (let i = 0; i <= points; i++) {
       const t = new Date(t0 + (i / points) * periodMs)
       const pv = propagate(rec.satrec, t)
-      if (!pv.position) continue
+      if (!pv || !pv.position) continue
       const geo = eciToGeodetic(pv.position, gstime(t))
-      path.push([degreesLong(geo.longitude), degreesLat(geo.latitude), geo.height * 1000])
+      let lon = degreesLong(geo.longitude)
+      // 经度连续化:消除 ±180° 跳变,否则 deck.gl 会画出横穿地球的直线
+      if (prevLon != null) {
+        while (lon - prevLon > 180) lon -= 360
+        while (lon - prevLon < -180) lon += 360
+      }
+      prevLon = lon
+      path.push([lon, degreesLat(geo.latitude), geo.height * 1000])
     }
     return path
   }, [])

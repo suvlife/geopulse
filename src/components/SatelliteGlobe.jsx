@@ -25,6 +25,7 @@ export default function SatelliteGlobe({
   const canvasRef = useRef(null)
   const deckRef = useRef(null)
   const lastFrameRef = useRef(-1)
+  const lastCamRef = useRef('')
   const selectedRef = useRef(selected)
   const orbitPathRef = useRef(orbitPath)
   const footprintRef = useRef(showFootprint)
@@ -41,7 +42,7 @@ export default function SatelliteGlobe({
         longitude: 116.4,
         latitude: 39.9,
         zoom: 1.8,
-        minZoom: 1,
+        minZoom: 0.3, // 允许拉远看 GEO 轨道
         maxZoom: 12,
         pitch: 10,
       },
@@ -54,14 +55,19 @@ export default function SatelliteGlobe({
       },
     })
     deckRef.current = deck
+    window.__deck = deck // 调试用
 
     // 渲染循环:直接读 positionsRef + frameRef,每帧直推 deck.gl,不经 React
     let raf
     const render = () => {
       const frame = frameRef.current
-      const changed = frame !== lastFrameRef.current
+      const vs = deck.viewState || {}
+      // 相机位置变化时也要重绘(近/远侧轨道分割依赖相机)
+      const camKey = `${(vs.longitude || 0).toFixed(2)},${(vs.latitude || 0).toFixed(2)}`
+      const changed = frame !== lastFrameRef.current || camKey !== lastCamRef.current
       if (changed) {
         lastFrameRef.current = frame
+        lastCamRef.current = camKey
         const sats = positionsRef.current || []
         const layers = buildSatelliteLayers({
           satellites: sats,
@@ -70,6 +76,7 @@ export default function SatelliteGlobe({
           visibleGroups: visibleGroupsRef.current,
           showFootprint: footprintRef.current,
           frame, // 作为 updateTrigger
+          camera: { lon: vs.longitude ?? 0, lat: vs.latitude ?? 0 },
         })
         deck.setProps({ layers })
       }
@@ -88,16 +95,22 @@ export default function SatelliteGlobe({
     lastFrameRef.current = -1
   }, [selected, orbitPath, showFootprint, visibleGroupsRef.current])
 
-  // 选中卫星 → 视角跟随
+  // 选中卫星 → 视角跟随:按轨道高度选缩放,让整个轨道椭圆可见
+  // (近视角下轨道大圆看起来像切线,必须拉远到全地球视角)
   useEffect(() => {
     const deck = deckRef.current
     if (!deck || !selected) return
+    const altKm = selected.alt / 1000
+    let zoom
+    if (altKm < 2000) zoom = 1.6       // LEO
+    else if (altKm < 30000) zoom = 1.0 // MEO
+    else zoom = 0.6                    // GEO
     deck.setProps({
       initialViewState: {
         ...deck.viewState,
         longitude: selected.lon,
-        latitude: Math.max(-80, Math.min(80, selected.lat)),
-        zoom: Math.max(deck.viewState?.zoom ?? 2, 3.2),
+        latitude: Math.max(-60, Math.min(60, selected.lat)),
+        zoom,
         transitionDuration: 900,
       },
     })
