@@ -173,6 +173,21 @@ export default {
       return cachedProxy(`https://data.istrongcloud.com/v2/data/complex/${id}.json`, 300, ctx)
     }
 
-    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail'] }, p === '/' ? 200 : 404)
+    // 卫星 TLE:CelesTrak 对浏览器 Origin 请求返回 403,必须服务端代理
+    if (p === '/tle') {
+      const group = url.searchParams.get('group') || 'active'
+      if (!/^[a-z0-9-]{2,30}$/.test(group)) return json({ error: 'bad group' }, 400)
+      return cachedProxy(
+        `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`,
+        7200, // 2h,与前端刷新周期一致
+        ctx
+      )
+    }
+
+    if (p === '/satcat') {
+      return cachedProxy('https://celestrak.org/pub/satcat.csv', 86400, ctx)
+    }
+
+    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail', '/tle', '/satcat'] }, p === '/' ? 200 : 404)
   },
 }

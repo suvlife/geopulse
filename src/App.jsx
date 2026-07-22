@@ -97,9 +97,10 @@ export default function App() {
   // ── 卫星状态 ──
   const sat = useSatellites(mode === 'satellite')
   const [selectedSat, setSelectedSat] = useState(null)
-  const [showOrbits, setShowOrbits] = useState(true)
-  const [showFootprints, setShowFootprints] = useState(false)
-  const [showLabels, setShowLabels] = useState(true)
+  const [orbitPath, setOrbitPath] = useState([])
+  const [showFootprint, setShowFootprint] = useState(true)
+  const visibleGroupsRef = useRef(sat.visibleGroups)
+  visibleGroupsRef.current = sat.visibleGroups
 
   // 初始化地图
   useEffect(() => {
@@ -215,6 +216,12 @@ export default function App() {
     if (map && map.getZoom() < 6) map.flyTo({ center: f.coord, zoom: 6.5, duration: 800 })
   }, [fl.loadServerTrail, fl.loadFlightInfo])
 
+  const onSelectSat = useCallback((s) => {
+    setSelectedSat(s)
+    if (s) setOrbitPath(sat.getOrbitPath(s))
+    else setOrbitPath([])
+  }, [sat.getOrbitPath])
+
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
     if (mode === 'quake') {
@@ -312,12 +319,13 @@ export default function App() {
       <div className="map-wrap">
         {isSatellite ? (
           <SatelliteGlobe
-            satellites={sat.satellites}
-            selectedId={selectedSat?.id}
-            showOrbits={showOrbits}
-            showFootprints={showFootprints}
-            showLabels={showLabels}
-            onClick={setSelectedSat}
+            positionsRef={sat.positionsRef}
+            frameRef={sat.frameRef}
+            visibleGroupsRef={visibleGroupsRef}
+            selected={selectedSat}
+            orbitPath={orbitPath}
+            showFootprint={showFootprint}
+            onClick={onSelectSat}
           />
         ) : (
           <>
@@ -328,17 +336,19 @@ export default function App() {
         {isSatellite ? (
           <SatellitePanel
             satellites={sat.satellites}
+            satinfo={sat.satinfo}
             selected={selectedSat}
-            onSelect={setSelectedSat}
-            groups={sat.groups}
-            setGroups={sat.setGroups}
-            showOrbits={showOrbits}
-            setShowOrbits={setShowOrbits}
-            showFootprints={showFootprints}
-            setShowFootprints={setShowFootprints}
-            showLabels={showLabels}
-            setShowLabels={setShowLabels}
+            onSelect={onSelectSat}
+            visibleGroups={sat.visibleGroups}
+            setVisibleGroups={sat.setVisibleGroups}
+            speed={sat.speed}
+            setTimeSpeed={sat.setTimeSpeed}
+            resetTime={sat.resetTime}
+            simTimeRef={sat.simTimeRef}
+            showFootprint={showFootprint}
+            setShowFootprint={setShowFootprint}
             loading={sat.loading}
+            progress={sat.progress}
             error={sat.error}
             updatedAt={sat.updatedAt}
           />

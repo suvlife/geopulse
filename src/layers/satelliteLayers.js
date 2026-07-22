@@ -2,72 +2,74 @@ import { BitmapLayer, ScatterplotLayer, PathLayer, TextLayer } from '@deck.gl/la
 import { TileLayer } from '@deck.gl/geo-layers'
 import { _GlobeView } from '@deck.gl/core'
 
-// 卫星颜色
+// 星座颜色(参考 OrbitLive)
 export const GROUP_COLORS = {
-  station: [255, 255, 255],
-  starlink: [100, 200, 255],
-  gps: [255, 200, 50],
-  active: [255, 140, 60],
-  other: [140, 150, 170],
+  starlink: [91, 192, 235],
+  oneweb: [190, 132, 255],
+  stations: [255, 255, 255],
+  gps: [61, 220, 151],
+  beidou: [255, 200, 60],
+  glonass: [255, 140, 70],
+  galileo: [150, 170, 255],
+  iridium: [255, 105, 150],
+  weather: [60, 230, 220],
+  others: [160, 165, 185],
 }
 
-// 星下点覆盖圈(地面投影,高度=0)
-function footprintRing(lon, lat, alt, radiusKm = 300) {
+export const GROUP_LABELS = {
+  starlink: '星链 Starlink',
+  oneweb: '一网 OneWeb',
+  stations: '空间站',
+  gps: 'GPS',
+  beidou: '北斗 BeiDou',
+  glonass: '格洛纳斯 GLONASS',
+  galileo: '伽利略 Galileo',
+  iridium: '铱星 Iridium',
+  weather: '气象 Weather',
+  others: '其他 Others',
+}
+
+// 地球纹理:NASA Blue Marble 风(昼夜分面用 Sunlit 效果更好,这里用暗色版)
+const GLOBE_TILES = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
+// 实际用 raster 版,CARTO 暗色
+const RASTER_TILES = 'https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png'
+
+// 星下点覆盖圈
+function footprintRing(lon, lat, alt, radiusKm = 400) {
   const R = 6371
-  const h = alt / 1000
   const alpha = (radiusKm / R) * (180 / Math.PI)
   const ring = []
-  for (let b = 0; b <= 360; b += 15) {
+  for (let b = 0; b <= 360; b += 10) {
     const br = (b * Math.PI) / 180
-    const dLat = Math.asin(Math.sin(lat * Math.PI / 180) * Math.cos(alpha * Math.PI / 180) +
-      Math.cos(lat * Math.PI / 180) * Math.sin(alpha * Math.PI / 180) * Math.cos(br))
-    const dLon = (lon * Math.PI / 180) + Math.atan2(
-      Math.sin(br) * Math.sin(alpha * Math.PI / 180) * Math.cos(lat * Math.PI / 180),
-      Math.cos(alpha * Math.PI / 180) - Math.sin(lat * Math.PI / 180) * Math.sin(dLat)
+    const latRad = (lat * Math.PI) / 180
+    const dLat = Math.asin(
+      Math.sin(latRad) * Math.cos((alpha * Math.PI) / 180) +
+      Math.cos(latRad) * Math.sin((alpha * Math.PI) / 180) * Math.cos(br)
+    )
+    const dLon = (lon * Math.PI) / 180 + Math.atan2(
+      Math.sin(br) * Math.sin((alpha * Math.PI) / 180) * Math.cos(latRad),
+      Math.cos((alpha * Math.PI) / 180) - Math.sin(latRad) * Math.sin(dLat)
     )
     ring.push([(dLon * 180) / Math.PI, (dLat * 180) / Math.PI, 0])
   }
   return ring
 }
 
-// 轨道线:基于当前高度的大圆,绕地球 2 圈
-function orbitArc(lon, lat, alt, inclination = 45) {
-  const pts = []
-  const rawAlt = alt / 1000
-  const R = 6371
-  const h = R + rawAlt
-  // 简化:沿航向角 ±180° 拉出大圆弧
-  for (let i = -180; i <= 180; i += 3) {
-    const br = (i * Math.PI) / 180
-    const cosD = Math.cos(i * Math.PI / 180)
-    const sinD = Math.sin(i * Math.PI / 180)
-    const latRad = (lat * Math.PI) / 180
-    const dLat = Math.asin(Math.sin(latRad) * cosD)
-    const dLonRad = (lon * Math.PI) / 180 + Math.atan2(sinD * Math.cos(latRad), cosD - Math.sin(latRad) * Math.sin(dLat))
-    pts.push([(dLonRad * 180) / Math.PI, (dLat * 180) / Math.PI, rawAlt * 1000])
-  }
-  return pts
-}
-
 export function getGlobeView() {
-  return new _GlobeView({
-    id: 'globe',
-    resolution: 10,
-  })
+  return new _GlobeView({ id: 'globe', resolution: 10 })
 }
 
-const GLOBE_TILES = 'https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png'
-
-export function buildSatelliteLayers({ satellites, selectedId, showOrbits, showFootprints, showLabels }) {
+export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleGroups, showFootprint, frame }) {
   const layers = []
 
-  // 地球纹理: 用 BitmapLayer 渲染 CARTO 暗色栅格瓦片
+  // 地球纹理
   layers.push(
     new TileLayer({
       id: 'globe-tiles',
-      data: GLOBE_TILES,
+      data: RASTER_TILES,
       minZoom: 0,
-      maxZoom: 8,
+      maxZoom: 9,
       tileSize: 256,
       renderSubLayers: (props) => {
         const { bbox: { west, south, east, north } } = props.tile
@@ -77,101 +79,105 @@ export function buildSatelliteLayers({ satellites, selectedId, showOrbits, showF
           bounds: [west, south, east, north],
         })
       },
-      onTileError: () => { /* 忽略瓦片缺失 */ },
+      onTileError: () => {},
     })
   )
 
   if (!satellites.length) return layers
 
-  const selected = satellites.find((s) => s.id === selectedId)
+  // 分组过滤 + 按组着色
+  const visible = satellites.filter((s) => visibleGroups[s.group] !== false && s.alt > 0)
 
-  // 轨道线
-  if (showOrbits) {
-    const orbitData = selected ? [selected] : satellites.filter((s) => s.group === 'station')
+  // 选中卫星:完整轨道线
+  if (selected && orbitPath?.length > 1) {
     layers.push(
       new PathLayer({
-        id: 'sat-orbits',
-        data: orbitData,
-        getPath: (d) => orbitArc(d.lon, d.lat, d.alt),
-        getColor: (d) => [...GROUP_COLORS[d.group] || GROUP_COLORS.other, 80],
-        getWidth: 1.2,
+        id: 'sel-orbit',
+        data: [{ path: orbitPath }],
+        getPath: (d) => d.path,
+        getColor: [255, 255, 255, 200],
+        getWidth: 1.6,
         widthUnits: 'pixels',
         jointRounded: true,
       })
     )
   }
 
-  // 星下点覆盖圈
-  if (showFootprints) {
-    const fpData = selected ? [selected] : satellites.filter((s) => s.group === 'station' || s.group === 'gps')
+  // 选中卫星覆盖圈
+  if (selected && showFootprint) {
     layers.push(
       new PathLayer({
-        id: 'sat-footprints',
-        data: fpData,
+        id: 'sel-footprint',
+        data: [selected],
         getPath: (d) => footprintRing(d.lon, d.lat, d.alt),
-        getColor: (d) => [...GROUP_COLORS[d.group] || GROUP_COLORS.other, 50],
-        getWidth: 1,
+        getColor: [255, 255, 255, 90],
+        getWidth: 1.2,
         widthUnits: 'pixels',
       })
     )
   }
 
-  // 选中卫星高亮环
+  // 选中卫星高亮点
   if (selected) {
     layers.push(
       new ScatterplotLayer({
-        id: 'sat-selected',
+        id: 'sel-highlight',
         data: [selected],
         getPosition: (d) => [d.lon, d.lat, d.alt],
-        getRadius: 80000,
+        getRadius: 120000,
         radiusUnits: 'meters',
-        radiusMinPixels: 8,
-        radiusMaxPixels: 18,
-        getFillColor: [255, 255, 255, 220],
+        radiusMinPixels: 7,
+        radiusMaxPixels: 16,
+        getFillColor: [255, 255, 255, 240],
         stroked: true,
-        getLineColor: [255, 255, 255, 80],
+        getLineColor: [...(GROUP_COLORS[selected.group] || GROUP_COLORS.others), 220],
         lineWidthMinPixels: 2,
       })
     )
   }
 
-  // 卫星散点
+  // 卫星散点(全量);位置被 rAF 原地更新,用 frame 作 updateTrigger 强制重读
   layers.push(
     new ScatterplotLayer({
       id: 'satellites',
-      data: satellites,
+      data: visible,
       pickable: true,
       getPosition: (d) => [d.lon, d.lat, d.alt],
       getRadius: (d) => {
+        if (d.id === selected?.id) return 0 // 选中点用高亮层
         switch (d.group) {
-          case 'station': return 120000
-          case 'starlink': return 20000
-          case 'gps': return 40000
-          default: return 30000
+          case 'stations': return 100000
+          case 'starlink': return 18000
+          case 'gps': case 'beidou': case 'glonass': case 'galileo': return 35000
+          default: return 22000
         }
       },
       radiusUnits: 'meters',
-      radiusMinPixels: (d) => d.group === 'starlink' ? 1.2 : 2.5,
-      radiusMaxPixels: (d) => d.group === 'station' ? 14 : 8,
-      getFillColor: (d) => [...GROUP_COLORS[d.group] || GROUP_COLORS.other, 230],
+      radiusMinPixels: (d) => (d.group === 'starlink' ? 1 : 1.5),
+      radiusMaxPixels: (d) => (d.group === 'stations' ? 10 : 5),
+      getFillColor: (d) => [...(GROUP_COLORS[d.group] || GROUP_COLORS.others), 220],
+      updateTriggers: {
+        getPosition: [frame],
+        getFillColor: [visibleGroups],
+        getRadius: [selected?.id],
+      },
     })
   )
 
-  // 标签
-  if (showLabels) {
-    const labelData = selected ? [selected] : satellites.filter((s) => s.group === 'station')
+  // 选中卫星标签
+  if (selected) {
     layers.push(
       new TextLayer({
-        id: 'sat-labels',
-        data: labelData,
+        id: 'sel-label',
+        data: [selected],
         getPosition: (d) => [d.lon, d.lat, d.alt],
         getText: (d) => d.name,
-        getSize: 13,
-        getColor: [255, 255, 255, 220],
-        getPixelOffset: [0, -18],
+        getSize: 14,
+        getColor: [255, 255, 255, 240],
+        getPixelOffset: [0, -22],
         background: true,
-        getBackgroundColor: [10, 14, 26, 180],
-        backgroundPadding: [5, 3],
+        getBackgroundColor: [10, 14, 26, 190],
+        backgroundPadding: [6, 3],
         characterSet: 'auto',
         fontFamily: 'system-ui, sans-serif',
       })

@@ -41,13 +41,11 @@
 - 搜索(航班号/注册号/机型)、按距离排序、紧急状态(squawk 7700 等)告警
 
 ### 🛰 卫星追踪(3D 地球实时演示)
-- **3D 地球渲染**:基于 deck.gl `_GlobeView`,可拖拽/缩放/旋转,暗色 CARTO 栅格地球
-- **CelesTrak TLE 数据源**:无需注册、无 API Key、无速率限制;每 2 小时刷新一次
-- **本地 SGP4 轨道推算**:使用 satellite.js 在浏览器内逐帧计算每颗卫星经纬度和高度,画面卫星**连续运动**(30fps),几乎不消耗 API 配额
-- **卫星分组**:空间站 / Starlink / GPS / 活跃卫星,可逐组开关;Starlink 自动抽样至 1800 颗(视觉足够且保持 30fps)
-- **视觉效果**:卫星按类型着色(空间站白 / Starlink 蓝 / GPS 黄 / 其他橙),点大小随轨道高度变化
-- **轨道线 + 星下点覆盖圈**:可开关,选中空间站/GPS 时自动绘制
-- **点击卫星**:显示名称、NORAD ID、经纬度、高度、近似轨道速度、类型
+- **16,000+ 在轨目标全量渲染**:CelesTrak active 全星座,3D 地球可拖拽/缩放/旋转
+- **TLE 快照分发**:构建时抓取快照随静态站分发(规避 CelesTrak 对浏览器/数据中心 IP 的 403 限流),用户零 CORS 零限流
+- **本地 SGP4 逐帧推算**:卫星逐帧连续运动(60fps),**时间加速 1×-1000×**,暂停/回到现在,UTC 时钟
+- **10 星座分组**:星链/一网/空间站/GPS/北斗/GLONASS/伽利略/铱星/气象/其他,独立开关+实时计数
+- **点击卫星看档案**:真实照片(Wikimedia Commons)+ SATCAT 档案(所属国、发射日期、轨道周期、倾角、远/近地点)+ 实时位置速度 + 完整轨道线 + 星下点覆盖圈
 - 参考效果:trackthesky.com / satellitemap.space
 
 ### 通用
@@ -95,7 +93,7 @@
 | 航班位置 | [adsb.lol](https://api.adsb.lol) | Worker 代理 | 社区 ADS-B,无 CORS 头必须代理;备源 [airplanes.live](https://airplanes.live)(CORS 开放可直连) |
 | 航线/航司 | [adsbdb](https://www.adsbdb.com) | 直连优先,Worker 兜底 | callsign → 航司/起降机场;对数据中心 IP 有限流,故前端直连优先 |
 | 飞机照片 | [planespotters.net](https://www.planespotters.net/photo/api) | Worker 代理(24h 缓存) | 要求 UA 携带联系方式,浏览器无法自定义 UA 必须代理 |
-| 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | 直连 | TLE 轨道根数,无需 API Key;每 2h 刷新,SGP4 本地推算 |
+| 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | **构建时快照** | gp.php 对浏览器/数据中心 IP 限流(403),构建时抓取快照到 `/data/` 随站分发;SATCAT 档案同方案 |
 
 > ⚠️ 信息仅供参考,台风/地震请以官方预警为准;航班数据来自社区网络,不得用于运行控制。
 

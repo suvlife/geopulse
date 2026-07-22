@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { TY_CATS, AGENCY_COLORS } from '../utils/scales.js'
-import { GROUP_COLORS } from '../layers/satelliteLayers.js'
+import { GROUP_COLORS, GROUP_LABELS } from '../layers/satelliteLayers.js'
 
 const MAG_ITEMS = [
   ['M<3', [46, 204, 113]], ['M3-4', [241, 196, 15]], ['M4-5', [230, 126, 34]],
@@ -17,12 +17,7 @@ const ALT_ITEMS = [
   ['6km', [77, 163, 255]], ['9km', [143, 107, 255]], ['12km+', [210, 77, 255]],
 ]
 
-const SAT_ITEMS = [
-  ['空间站', GROUP_COLORS.station],
-  ['Starlink', GROUP_COLORS.starlink],
-  ['GPS', GROUP_COLORS.gps],
-  ['活跃卫星', GROUP_COLORS.active],
-]
+const SAT_ITEMS = Object.entries(GROUP_LABELS).map(([key, label]) => [label, GROUP_COLORS[key]])
 
 export default function Legend({ mode, colorBy }) {
   // 手机上默认折叠,桌面默认展开
