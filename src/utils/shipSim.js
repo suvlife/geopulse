@@ -108,6 +108,15 @@ export function generateShips(count = 400, seed = 42) {
       length: type === 'tug' ? 25 + rnd() * 15 : type === 'fishing' ? 40 + rnd() * 30 : 150 + rnd() * 250,
     })
   }
+  // 初始化即计算位置(否则首帧渲染时 coord 为 undefined 被过滤)
+  for (const s of ships) {
+    const route = ROUTES.find((r) => r.id === s.route)
+    if (route) {
+      const pos = pointAlongRoute(route.points, s.dist)
+      s.coord = pos.coord
+      s.bearing = pos.bearing
+    }
+  }
   return ships
 }
 

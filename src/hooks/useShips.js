@@ -18,7 +18,6 @@ export function useShips(enabled, aisKey) {
     setShips([...shipsRef.current]) // 立即同步一次
     setMode('demo')
     setError(null)
-    window.__shipDebug = { init: true, count: shipsRef.current.length } // 调试
   }, [])
 
   useEffect(() => {
@@ -84,24 +83,21 @@ export function useShips(enabled, aisKey) {
     return () => { try { ws?.close() } catch {} }
   }, [enabled, aisKey])
 
-  // 模拟推进(仅 demo 模式)
+  // 模拟推进(仅 demo 模式);用 setInterval 避免 rAF 在 StrictMode 双重渲染下被取消
   useEffect(() => {
     if (!enabled || mode === 'live') return
-    let raf, last = 0
-    const tick = (realNow) => {
+    let last = Date.now()
+    const iv = setInterval(() => {
+      const now = Date.now()
+      const dt = now - last
+      last = now
       const sim = simRef.current
-      if (sim.lastReal) sim.time += (realNow - sim.lastReal) * sim.speed
-      sim.lastReal = realNow
-      if (realNow - last > 200) { // 5fps 更新位置(demo 不需要 60fps)
-        last = realNow
-        advanceShips(shipsRef.current, 200, sim.speed)
-        frameRef.current++
-        setShips([...shipsRef.current]) // 低频 React 同步
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+      sim.time += dt * sim.speed
+      advanceShips(shipsRef.current, dt, sim.speed)
+      frameRef.current++
+      setShips(shipsRef.current.map((s) => ({ ...s })))
+    }, 200)
+    return () => clearInterval(iv)
   }, [enabled, mode])
 
   // live 模式低频同步到 React
@@ -109,7 +105,7 @@ export function useShips(enabled, aisKey) {
     if (!enabled || mode !== 'live') return
     const t = setInterval(() => {
       frameRef.current++
-      setShips([...shipsRef.current])
+      setShips(shipsRef.current.map((s) => ({ ...s })))
     }, 1500)
     return () => clearInterval(t)
   }, [enabled, mode])
