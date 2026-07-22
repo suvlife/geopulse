@@ -39,22 +39,34 @@ export function useFlights(center, enabled) {
   const load = useCallback(async () => {
     const [lon, lat] = centerRef.current
     const qs = `lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}&dist=250`
-    let data, source
-    try {
-      const r = await fetch(`${API}/flights?${qs}`, { signal: AbortSignal.timeout(12000) })
-      if (!r.ok) throw new Error(`worker ${r.status}`)
-      data = await r.json()
-      source = 'adsb.lol'
-    } catch {
-      try {
-        const r = await fetch(`${DIRECT}/point/${lat.toFixed(2)}/${lon.toFixed(2)}/250`, { signal: AbortSignal.timeout(12000) })
-        if (!r.ok) throw new Error(`direct ${r.status}`)
-        data = await r.json()
-        source = 'airplanes.live'
-      } catch (e) {
-        setState((s) => ({ ...s, loading: false, error: e.message }))
-        return
-      }
+    const directUrl = `${DIRECT}/point/${lat.toFixed(2)}/${lon.toFixed(2)}/250`
+    // 双源并行:Worker 代理(adsb.lol,数据更全)+ airplanes.live 直连(CORS 稳)
+    // 按 hex 合并,同一架飞机优先 adsb.lol 字段
+    const fetchJson = async (u) => {
+      const r = await fetch(u, { signal: AbortSignal.timeout(12000) })
+      if (!r.ok) throw new Error(`${r.status}`)
+      return r.json()
+    }
+    const [workerRes, directRes] = await Promise.allSettled([
+      fetchJson(`${API}/flights?${qs}`),
+      fetchJson(directUrl),
+    ])
+    const merged = new Map()
+    let source = null
+    // 先放直连(airplanes.live),再放 Worker(adsb.lol)覆盖同 hex
+    if (directRes.status === 'fulfilled' && Array.isArray(directRes.value?.ac)) {
+      for (const a of directRes.value.ac) if (a.hex) merged.set(a.hex, a)
+      if (directRes.value.ac.length) source = 'airplanes.live'
+    }
+    if (workerRes.status === 'fulfilled' && Array.isArray(workerRes.value?.ac)) {
+      for (const a of workerRes.value.ac) if (a.hex) merged.set(a.hex, a)
+      if (workerRes.value.ac.length) source = workerRes.value.ac.length >= (merged.size || 1) ? 'adsb.lol' : source
+    }
+    const data = { ac: [...merged.values()] }
+    if (!data.ac.length) {
+      const err = workerRes.status === 'rejected' && directRes.status === 'rejected' ? 'all sources failed' : null
+      setState((s) => ({ ...s, loading: false, error: err }))
+      return
     }
     const flights = normalize(data)
     // 轨迹累积:每次轮询追加新位置,选中的飞机即可画出历史航路

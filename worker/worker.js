@@ -110,24 +110,46 @@ async function handleFlights(url, env, ctx) {
     return out
   }
 
+  // 浏览器 UA:adsb.lol 对数据中心 IP + 自定义 UA 会限流(尤其北京)
+  const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+
   let up
   try {
-    up = await fetch(upstreamUrl, { headers: { 'User-Agent': 'GeoPulse/1.0 (github.com/suvlife/geopulse)' }, signal: AbortSignal.timeout(9000) })
+    up = await fetch(upstreamUrl, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(9000) })
     if (!up.ok) throw new Error(`adsb.lol ${up.status}`)
   } catch {
+    // adsb.lol 失败重试一次
     try {
-      up = await fetch(`https://api.airplanes.live/v2/point/${lat}/${lon}/${dist}`, { headers: { 'User-Agent': 'GeoPulse/1.0' }, signal: AbortSignal.timeout(9000) })
-      if (!up.ok) throw new Error(`airplanes.live ${up.status}`)
-    } catch (e) {
-      return json({ error: String(e) }, 502)
+      up = await fetch(upstreamUrl, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(9000) })
+      if (!up.ok) throw new Error(`adsb.lol retry ${up.status}`)
+    } catch {
+      try {
+        up = await fetch(`https://api.airplanes.live/v2/point/${lat}/${lon}/${dist}`, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(9000) })
+        if (!up.ok) throw new Error(`airplanes.live ${up.status}`)
+      } catch (e) {
+        return json({ error: String(e) }, 502)
+      }
     }
   }
 
-  const body = await up.text()
+  let body = await up.text()
+  // 主源返回空但可再试备源(adsb.lol 对 CF IP 部分区域限流返回空)
+  try {
+    const parsed = JSON.parse(body)
+    if (Array.isArray(parsed.ac) && parsed.ac.length === 0) {
+      const fb = await fetch(`https://api.airplanes.live/v2/point/${lat}/${lon}/${dist}`, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(9000) })
+      if (fb.ok) {
+        const fbText = await fb.text()
+        const fbParsed = JSON.parse(fbText)
+        if (Array.isArray(fbParsed.ac) && fbParsed.ac.length > 0) body = fbText
+      }
+    }
+  } catch { /* 保留主源 */ }
   ctx.waitUntil(recordTrails(env, `${lat},${lon}`, body))
+  // 缓存 30s:降低对 adsb.lol@CF 的请求频率,避免触发限流(飞机 30s 位移可接受)
   const res = new Response(body, {
     status: 200,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=12', ...CORS, 'X-Cache': 'MISS' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30', ...CORS, 'X-Cache': 'MISS' },
   })
   ctx.waitUntil(cache.put(cacheKey, res.clone()))
   return res
