@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { TY_CATS, AGENCY_COLORS } from '../utils/scales.js'
 import { GROUP_COLORS, GROUP_LABELS } from '../layers/satelliteLayers.js'
+import { SHIP_TYPE_COLORS, SHIP_TYPE_LABELS } from '../data/shipData.js'
 
 const MAG_ITEMS = [
   ['M<3', [46, 204, 113]], ['M3-4', [241, 196, 15]], ['M4-5', [230, 126, 34]],
@@ -66,6 +67,18 @@ export default function Legend({ mode, colorBy }) {
             ))}
           </div>
           <div className="legend-note">3D 地球可拖拽/缩放/旋转 · 点大小~轨道高度</div>
+        </>
+      ) : mode === 'ship' ? (
+        <>
+          <div className="legend-title">船型</div>
+          <div className="legend-items">
+            {Object.entries(SHIP_TYPE_LABELS).map(([k, l]) => (
+              <span key={k} className="legend-item">
+                <i style={{ background: `rgb(${SHIP_TYPE_COLORS[k].join(',')})` }} />{l}
+              </span>
+            ))}
+          </div>
+          <div className="legend-note">船头朝向 = 航向 · ⚓ 黄色圆点 = 港口 · 点击船查看档案</div>
         </>
       ) : (
         <>

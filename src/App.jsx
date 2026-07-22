@@ -5,12 +5,15 @@ import { useEarthquakes } from './hooks/useEarthquakes.js'
 import { useTyphoons } from './hooks/useTyphoons.js'
 import { useFlights } from './hooks/useFlights.js'
 import { useSatellites } from './hooks/useSatellites.js'
+import { useShips } from './hooks/useShips.js'
 import { buildQuakeLayers, quakePulseLayers } from './layers/quakeLayers.js'
 import { buildTyphoonLayers, typhoonPulseLayers } from './layers/typhoonLayers.js'
 import { buildFlightLayers, flightPulseLayers } from './layers/flightLayers.js'
+import { buildShipLayers } from './layers/shipLayers.js'
 import QuakePanel from './components/QuakePanel.jsx'
 import TyphoonPanel from './components/TyphoonPanel.jsx'
 import FlightPanel from './components/FlightPanel.jsx'
+import ShipPanel from './components/ShipPanel.jsx'
 import SatelliteGlobe from './components/SatelliteGlobe.jsx'
 import SatellitePanel from './components/SatellitePanel.jsx'
 import Legend from './components/Legend.jsx'
@@ -102,6 +105,17 @@ export default function App() {
   const visibleGroupsRef = useRef(sat.visibleGroups)
   visibleGroupsRef.current = sat.visibleGroups
 
+  // ── 船舶状态 ──
+  const [aisKey, setAisKey] = useState(() => {
+    try { return localStorage.getItem('geopulse.aisKey') || '' } catch { return '' }
+  })
+  const ship = useShips(mode === 'ship', aisKey)
+  const [selectedShip, setSelectedShip] = useState(null)
+  const [shipColorBy, setShipColorBy] = useState('type')
+  const [visibleTypes, setVisibleTypes] = useState({})
+  const [visibleCountries, setVisibleCountries] = useState(new Set())
+  const [shipSimSpeed, setShipSimSpeed] = useState(60)
+
   // 初始化地图
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -171,6 +185,9 @@ export default function App() {
     if (!map) return
     if (mode === 'quake') {
       map.flyTo({ center: [150, 8], zoom: 1.6, duration: 1200 })
+    } else if (mode === 'ship') {
+      // 马六甲海峡视角
+      map.flyTo({ center: [101.0, 2.0], zoom: 6, duration: 1200 })
     } else if (mode === 'flight') {
       if (firstFlightVisitRef.current) {
         // 首次进入航班页:无论此前地图在哪,都以北京为起始视角
@@ -222,6 +239,20 @@ export default function App() {
     else setOrbitPath([])
   }, [sat.getOrbitPath])
 
+  const onSelectShip = useCallback((s) => {
+    setSelectedShip(s)
+    const map = mapRef.current
+    if (map && map.getZoom() < 7) map.flyTo({ center: s.coord, zoom: 8, duration: 800 })
+  }, [])
+
+  // aisKey 持久化 + 模拟速度同步
+  useEffect(() => {
+    try { if (aisKey) localStorage.setItem('geopulse.aisKey', aisKey) } catch {}
+  }, [aisKey])
+  useEffect(() => {
+    ship.setSimSpeed(shipSimSpeed)
+  }, [shipSimSpeed, ship])
+
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
     if (mode === 'quake') {
@@ -237,8 +268,15 @@ export default function App() {
         onClick: (info) => info.object && onSelectFlight(info.object),
       })
     }
+    if (mode === 'ship') {
+      return buildShipLayers({
+        ships: ship.ships, selected: selectedShip, colorBy: shipColorBy,
+        visibleTypes, visibleCountries,
+        onClick: (info) => info.object && onSelectShip(info.object),
+      })
+    }
     return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
-  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightInfo, flightCenter, onSelectFlight])
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightInfo, flightCenter, onSelectFlight, ship.ships, selectedShip, shipColorBy, visibleTypes, visibleCountries, onSelectShip])
 
   // 脉冲动画源
   const pulseSource = useMemo(() => {
@@ -251,9 +289,12 @@ export default function App() {
       const sel = fl.flights.find((f) => f.hex === selectedFlight)
       return sel ? { type: 'flight', data: sel } : null
     }
+    if (mode === 'ship') {
+      return selectedShip ? { type: 'ship', data: selectedShip } : null
+    }
     const current = typhoon?.track[timeIdx]
     return current ? { type: 'typhoon', data: current } : null
-  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now, fl.flights, selectedFlight])
+  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now, fl.flights, selectedFlight, selectedShip])
 
   // rAF 动画循环：直接更新 overlay，不触发 React 渲染
   useEffect(() => {
@@ -261,7 +302,8 @@ export default function App() {
     if (!overlay) return
     // 静态图层立即应用（rAF 在后台标签页会被节流，不能依赖它做首次渲染）
     overlay.setProps({ layers })
-    if (!pulseSource) return
+    // 无脉冲动画的模式(如船舶)只需静态图层,不需要动画循环
+    if (!pulseSource || pulseSource.type === 'ship') return
     let raf, last = 0
     const loop = (t) => {
       // window.__animPaused: 测试/截图时暂停动画,让渲染管线进入空闲
@@ -284,6 +326,7 @@ export default function App() {
   const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : mode === 'satellite' ? sat.refresh : ty.refresh
 
   const isSatellite = mode === 'satellite'
+  const isShip = mode === 'ship'
 
   return (
     <div className="app">
@@ -298,6 +341,7 @@ export default function App() {
           <button className={mode === 'quake' ? 'tab active' : 'tab'} onClick={() => setMode('quake')}>🌍 地震</button>
           <button className={mode === 'flight' ? 'tab active' : 'tab'} onClick={() => setMode('flight')}>✈️ 航班</button>
           <button className={mode === 'satellite' ? 'tab active' : 'tab'} onClick={() => setMode('satellite')}>🛰 卫星</button>
+          <button className={mode === 'ship' ? 'tab active' : 'tab'} onClick={() => setMode('ship')}>🚢 船舶</button>
         </nav>
         <div className="header-right">
           {!isSatellite && (
@@ -362,6 +406,17 @@ export default function App() {
           <FlightPanel
             flights={fl.flights} selected={selectedFlight} onSelect={onSelectFlight} flightInfo={flightInfo}
             loading={fl.loading} error={fl.error} updatedAt={fl.updatedAt} source={fl.source} now={now}
+          />
+        ) : isShip ? (
+          <ShipPanel
+            ships={ship.ships} selected={selectedShip} onSelect={onSelectShip}
+            mode={ship.mode} error={ship.error} source={ship.source}
+            colorBy={shipColorBy} setColorBy={setShipColorBy}
+            visibleTypes={visibleTypes} setVisibleTypes={setVisibleTypes}
+            visibleCountries={visibleCountries} setVisibleCountries={setVisibleCountries}
+            aisKey={aisKey} setAisKey={setAisKey}
+            simSpeed={shipSimSpeed} setSimSpeed={setShipSimSpeed}
+            resetSim={ship.resetSim} simTimeRef={ship.simRef}
           />
         ) : (
           <TyphoonPanel
