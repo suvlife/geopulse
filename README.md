@@ -1,12 +1,12 @@
 # GeoPulse 🌐
 
-**台风 · 地震 · 航班实时追踪可视化平台**
+**台风 · 地震 · 航班 · 卫星实时追踪可视化平台**
 
-一个纯前端 + 边缘计算的开源实时追踪站:台风路径与多机构预报、全球地震监测、类 Flightradar24 的航班追踪,全部基于**免费数据源**构建。
+一个纯前端 + 边缘计算的开源实时追踪站:台风路径与多机构预报、全球地震监测、类 Flightradar24 的航班追踪、**3D 地球卫星星座可视化**,全部基于**免费数据源**构建。
 
 **🔗 在线访问:https://geopulse.guofeng.me**
 
-![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-4-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV-f38020?logo=cloudflare)
+![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-4-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![satellite.js](https://img.shields.io/badge/satellite.js-SGP4-2ea44f) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV-f38020?logo=cloudflare)
 
 ---
 
@@ -40,6 +40,16 @@
 - **双层航迹**:服务端 KV 持续记录(任何访客浏览过的区域自动积累历史)+ 本地 12s 轮询实时累积
 - 搜索(航班号/注册号/机型)、按距离排序、紧急状态(squawk 7700 等)告警
 
+### 🛰 卫星追踪(3D 地球实时演示)
+- **3D 地球渲染**:基于 deck.gl `_GlobeView`,可拖拽/缩放/旋转,暗色 CARTO 栅格地球
+- **CelesTrak TLE 数据源**:无需注册、无 API Key、无速率限制;每 2 小时刷新一次
+- **本地 SGP4 轨道推算**:使用 satellite.js 在浏览器内逐帧计算每颗卫星经纬度和高度,画面卫星**连续运动**(30fps),几乎不消耗 API 配额
+- **卫星分组**:空间站 / Starlink / GPS / 活跃卫星,可逐组开关;Starlink 自动抽样至 1800 颗(视觉足够且保持 30fps)
+- **视觉效果**:卫星按类型着色(空间站白 / Starlink 蓝 / GPS 黄 / 其他橙),点大小随轨道高度变化
+- **轨道线 + 星下点覆盖圈**:可开关,选中空间站/GPS 时自动绘制
+- **点击卫星**:显示名称、NORAD ID、经纬度、高度、近似轨道速度、类型
+- 参考效果:trackthesky.com / satellitemap.space
+
 ### 通用
 - 深色主题 + WebGL 高性能渲染,数千点位流畅交互
 - **多源底图自动测速**:腾讯暗色(国内快)/CARTO(海外矢量)/Esri 暗灰,顶栏可手动切换并记住偏好
@@ -53,6 +63,8 @@
 ┌────────────────────────────────────────────────┐
 │  前端 (Cloudflare Pages, 纯静态)                │
 │  React 18 + Vite + MapLibre GL + deck.gl 9     │
+│  台风/地震/航班: MapLibre + MapboxOverlay deck  │
+│  卫星: deck.gl _GlobeView (3D 地球)             │
 │  https://geopulse.guofeng.me                   │
 └──────┬─────────────────────────┬───────────────┘
        │ 直连(支持 CORS 的源)      │ 代理(CORS/UA/限流受限的源)
@@ -69,6 +81,7 @@
 **设计要点**
 
 - **动画与渲染分离**:脉冲/扩散动画走独立 rAF 循环直接更新 deck.gl overlay,不触发 React 重渲染;静态图层同步应用,后台标签页不受 rAF 节流影响
+- **卫星 SGP4 逐帧推算**:每帧只传播当前时刻,30fps 连续运动;Starlink 抽样 1800 颗保证流畅
 - **边缘缓存策略**:航班请求坐标取整到 0.5° 网格 → 相邻用户命中同一缓存(12s TTL),保护免费上游
 - **KV 航迹"搭便车"记录**:`/flights` 缓存未命中回源时顺手把整个区域所有飞机位置写入 KV(150s 写节流,适配免费额度 1000 写/天;每机 60 点,6h 过期),不产生任何额外上游请求
 - **多级降级**:每个数据源都有直连→代理→兜底数据的降级链,单点故障不白屏
@@ -82,6 +95,7 @@
 | 航班位置 | [adsb.lol](https://api.adsb.lol) | Worker 代理 | 社区 ADS-B,无 CORS 头必须代理;备源 [airplanes.live](https://airplanes.live)(CORS 开放可直连) |
 | 航线/航司 | [adsbdb](https://www.adsbdb.com) | 直连优先,Worker 兜底 | callsign → 航司/起降机场;对数据中心 IP 有限流,故前端直连优先 |
 | 飞机照片 | [planespotters.net](https://www.planespotters.net/photo/api) | Worker 代理(24h 缓存) | 要求 UA 携带联系方式,浏览器无法自定义 UA 必须代理 |
+| 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | 直连 | TLE 轨道根数,无需 API Key;每 2h 刷新,SGP4 本地推算 |
 
 > ⚠️ 信息仅供参考,台风/地震请以官方预警为准;航班数据来自社区网络,不得用于运行控制。
 
@@ -110,6 +124,7 @@ npx wrangler deploy
 
 - `scripts/screenshot.mjs`:puppeteer 可视化回归截图(页面含持续 WebGL 动画,截图前设置 `window.__animPaused=true`;macOS 上窗口必须真实可见,遮挡会挂起合成器导致 CDP 截图超时)
 - 调试全局:`window.__map`(MapLibre 实例)、`window.__overlay`(deck.gl overlay)
+- `vite.config.js` 中通过 alias 屏蔽了 satellite.js 的 wasm worker 动态导入(`#wasm-single-thread`/`#wasm-multi-thread` → `src/utils/satellite-wasm-stub.js`),强制使用纯 JS SGP4 实现,避免浏览器打包失败
 - 腾讯/高德底图为 GCJ-02 坐标系,与 WGS-84 数据叠加在省级缩放(z≤8)偏差 <1px 可忽略;街道级精度请切 CARTO/Esri
 
 ## Roadmap
@@ -121,6 +136,7 @@ npx wrangler deploy
 - [ ] 用户定位:距我最近的地震 / 台风到达我所在城市倒计时
 - [ ] 历史台风库与相似路径检索
 - [ ] 机场模式:点击机场看进出港航班列表
+- [ ] 卫星模式:ISS/Starlink 实时过境预报、地面观察者视角
 
 ## License
 

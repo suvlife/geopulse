@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { TY_CATS, AGENCY_COLORS } from '../utils/scales.js'
+import { GROUP_COLORS } from '../layers/satelliteLayers.js'
 
 const MAG_ITEMS = [
   ['M<3', [46, 204, 113]], ['M3-4', [241, 196, 15]], ['M4-5', [230, 126, 34]],
@@ -14,6 +15,13 @@ const AGENCY_NAMES = { CMA: '中央气象台', JMA: '日本气象厅', JTWC: '�
 const ALT_ITEMS = [
   ['地面', [150, 155, 170]], ['低空', [255, 207, 77]], ['3km', [124, 224, 122]],
   ['6km', [77, 163, 255]], ['9km', [143, 107, 255]], ['12km+', [210, 77, 255]],
+]
+
+const SAT_ITEMS = [
+  ['空间站', GROUP_COLORS.station],
+  ['Starlink', GROUP_COLORS.starlink],
+  ['GPS', GROUP_COLORS.gps],
+  ['活跃卫星', GROUP_COLORS.active],
 ]
 
 export default function Legend({ mode, colorBy }) {
@@ -51,6 +59,18 @@ export default function Legend({ mode, colorBy }) {
             ))}
           </div>
           <div className="legend-note">机头朝向 = 航向 · 虚线圈 = 数据覆盖范围(463km)· 点击飞机显示航路</div>
+        </>
+      ) : mode === 'satellite' ? (
+        <>
+          <div className="legend-title">卫星类型</div>
+          <div className="legend-items">
+            {SAT_ITEMS.map(([label, c]) => (
+              <span key={label} className="legend-item">
+                <i style={{ background: `rgb(${c.join(',')})` }} />{label}
+              </span>
+            ))}
+          </div>
+          <div className="legend-note">3D 地球可拖拽/缩放/旋转 · 点大小~轨道高度</div>
         </>
       ) : (
         <>

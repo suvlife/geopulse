@@ -4,12 +4,15 @@ import { MapboxOverlay } from '@deck.gl/mapbox'
 import { useEarthquakes } from './hooks/useEarthquakes.js'
 import { useTyphoons } from './hooks/useTyphoons.js'
 import { useFlights } from './hooks/useFlights.js'
+import { useSatellites } from './hooks/useSatellites.js'
 import { buildQuakeLayers, quakePulseLayers } from './layers/quakeLayers.js'
 import { buildTyphoonLayers, typhoonPulseLayers } from './layers/typhoonLayers.js'
 import { buildFlightLayers, flightPulseLayers } from './layers/flightLayers.js'
 import QuakePanel from './components/QuakePanel.jsx'
 import TyphoonPanel from './components/TyphoonPanel.jsx'
 import FlightPanel from './components/FlightPanel.jsx'
+import SatelliteGlobe from './components/SatelliteGlobe.jsx'
+import SatellitePanel from './components/SatellitePanel.jsx'
 import Legend from './components/Legend.jsx'
 import { fmtTime } from './utils/geo.js'
 import { TY_CATS } from './utils/scales.js'
@@ -90,6 +93,13 @@ export default function App() {
   const fl = useFlights(flightCenter, mode === 'flight')
   const [selectedFlight, setSelectedFlight] = useState(null)
   const [flightInfo, setFlightInfo] = useState(null) // { route, photo }
+
+  // ── 卫星状态 ──
+  const sat = useSatellites(mode === 'satellite')
+  const [selectedSat, setSelectedSat] = useState(null)
+  const [showOrbits, setShowOrbits] = useState(true)
+  const [showFootprints, setShowFootprints] = useState(false)
+  const [showLabels, setShowLabels] = useState(true)
 
   // 初始化地图
   useEffect(() => {
@@ -263,8 +273,10 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [layers, pulseSource])
 
-  const updatedAt = mode === 'quake' ? eq.updatedAt : mode === 'flight' ? fl.updatedAt : ty.updatedAt
-  const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : ty.refresh
+  const updatedAt = mode === 'quake' ? eq.updatedAt : mode === 'flight' ? fl.updatedAt : mode === 'satellite' ? sat.updatedAt : ty.updatedAt
+  const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : mode === 'satellite' ? sat.refresh : ty.refresh
+
+  const isSatellite = mode === 'satellite'
 
   return (
     <div className="app">
@@ -278,16 +290,19 @@ export default function App() {
           <button className={mode === 'typhoon' ? 'tab active' : 'tab'} onClick={() => setMode('typhoon')}>🌀 台风</button>
           <button className={mode === 'quake' ? 'tab active' : 'tab'} onClick={() => setMode('quake')}>🌍 地震</button>
           <button className={mode === 'flight' ? 'tab active' : 'tab'} onClick={() => setMode('flight')}>✈️ 航班</button>
+          <button className={mode === 'satellite' ? 'tab active' : 'tab'} onClick={() => setMode('satellite')}>🛰 卫星</button>
         </nav>
         <div className="header-right">
-          <select
-            className="basemap-select"
-            value={basemapId}
-            onChange={(e) => { setBasemapId(e.target.value); saveBasemapPref(e.target.value) }}
-            title="切换底图"
-          >
-            {BASEMAPS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          {!isSatellite && (
+            <select
+              className="basemap-select"
+              value={basemapId}
+              onChange={(e) => { setBasemapId(e.target.value); saveBasemapPref(e.target.value) }}
+              title="切换底图"
+            >
+              {BASEMAPS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           <span className="pulse-dot" />
           <span className="updated">{updatedAt ? `更新于 ${fmtTime(updatedAt)}` : '加载中…'}</span>
           <button className="refresh-btn" onClick={refresh} title="立即刷新">⟳</button>
@@ -295,9 +310,39 @@ export default function App() {
       </header>
 
       <div className="map-wrap">
-        <div ref={mapEl} className="map" />
-        {!mapReady && <div className="map-loading"><span className="spinner" />底图加载中…</div>}
-        {mode === 'quake' ? (
+        {isSatellite ? (
+          <SatelliteGlobe
+            satellites={sat.satellites}
+            selectedId={selectedSat?.id}
+            showOrbits={showOrbits}
+            showFootprints={showFootprints}
+            showLabels={showLabels}
+            onClick={setSelectedSat}
+          />
+        ) : (
+          <>
+            <div ref={mapEl} className="map" />
+            {!mapReady && <div className="map-loading"><span className="spinner" />底图加载中…</div>}
+          </>
+        )}
+        {isSatellite ? (
+          <SatellitePanel
+            satellites={sat.satellites}
+            selected={selectedSat}
+            onSelect={setSelectedSat}
+            groups={sat.groups}
+            setGroups={sat.setGroups}
+            showOrbits={showOrbits}
+            setShowOrbits={setShowOrbits}
+            showFootprints={showFootprints}
+            setShowFootprints={setShowFootprints}
+            showLabels={showLabels}
+            setShowLabels={setShowLabels}
+            loading={sat.loading}
+            error={sat.error}
+            updatedAt={sat.updatedAt}
+          />
+        ) : mode === 'quake' ? (
           <QuakePanel
             quakes={quakes} params={quakeParams} setParams={setQuakeParams}
             selected={selectedQuake} onSelect={onSelectQuake}
