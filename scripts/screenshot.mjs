@@ -12,9 +12,9 @@ const chromePath = execSync(
 const browser = await puppeteer.launch({
   executablePath: chromePath,
   headless: false, // macOS 无头模式下 WebGL 页面 captureScreenshot 会挂起
-  args: ['--window-size=1440,900', '--hide-scrollbars', '--window-position=2000,100'],
+  args: ['--window-size=1440,900', '--hide-scrollbars', '--window-position=100,100'],
   defaultViewport: { width: 1440, height: 900 },
-  protocolTimeout: 60000,
+  protocolTimeout: 90000,
 })
 
 const page = await browser.newPage()
@@ -36,12 +36,13 @@ async function shot(name) {
   await page.evaluate(() => { window.__animPaused = false })
 }
 
-await page.goto('http://localhost:5188/', { waitUntil: 'networkidle2', timeout: 30000 })
-await sleep(6000)
+await page.goto('https://geopulse.guofeng.me/', { waitUntil: 'networkidle2', timeout: 60000 })
+// 等 CF JS Challenge 完成(有 headless 检测时最多 15s)
+await sleep(15000)
 await shot('shot-typhoon')
 
-await page.evaluate(() => document.querySelectorAll('.tab')[1].click())
-await sleep(7000)
-await shot('shot-quake')
+await page.evaluate(() => document.querySelectorAll(".tab")[4]?.click())
+await sleep(10000)
+await shot('shot-ship')
 
 await browser.close()
