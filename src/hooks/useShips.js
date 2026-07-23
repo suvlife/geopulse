@@ -42,7 +42,6 @@ export function useShips(enabled) {
   // AIS 实时流
   useEffect(() => {
     if (!enabled) return
-    window.__shipEffectRan = (window.__shipEffectRan || 0) + 1
     // 用 ref 而非闭包变量,避免 StrictMode 双渲染时第二次 effect 拿到第一次的 stopped=true
     const ctrl = { stopped: false, retryTimer: null, ws: null }
     ctrlRef.current = ctrl
@@ -80,7 +79,6 @@ export function useShips(enabled) {
 
       ws.binaryType = 'arraybuffer' // aisstream 发二进制消息
       ws.onmessage = async (e) => {
-        window.__aisMsgCount = (window.__aisMsgCount || 0) + 1
         try {
           // aisstream 消息是二进制(Blob/ArrayBuffer),需转文本
           let text
@@ -93,12 +91,7 @@ export function useShips(enabled) {
           } else {
             text = String(e.data)
           }
-          if (!window.__aisRawSample) window.__aisRawSample = text.slice(0, 400)
           const msg = JSON.parse(text)
-          if (!window.__aisParsedSample) window.__aisParsedSample = JSON.stringify(msg).slice(0, 400)
-          if (!window.__aisTypeCount) window.__aisTypeCount = {}
-          const t = msg.MessageType
-          window.__aisTypeCount[t] = (window.__aisTypeCount[t] || 0) + 1
           const type = msg.MessageType
           if (type === 'PositionReport' || type === 'StandardClassBPositionReport' || type === 'ExtendedClassBPositionReport') {
             const pr = msg.Message?.[type]
