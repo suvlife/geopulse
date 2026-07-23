@@ -11,11 +11,9 @@ export default function ShipPanel({
   ships, selected, onSelect, mode, error, source,
   colorBy, setColorBy, visibleTypes, setVisibleTypes,
   visibleCountries, setVisibleCountries,
-  aisKey, setAisKey,
   simSpeed, setSimSpeed, resetSim, simTimeRef,
 }) {
   const [query, setQuery] = useState('')
-  const [showKeyInput, setShowKeyInput] = useState(false)
 
   const stats = useMemo(() => {
     const byType = {}
@@ -35,8 +33,8 @@ export default function ShipPanel({
     <div className="panel">
       <div className="panel-title">
         🚢 船舶追踪
-        <span className={mode === 'live' ? 'badge live' : 'badge demo'}>
-          {mode === 'live' ? 'aisstream 实时' : '演示数据'}
+        <span className={mode === 'live' ? 'badge live' : mode === 'connecting' ? 'badge demo' : 'badge demo'}>
+          {mode === 'live' ? 'aisstream 实时' : mode === 'connecting' ? '连接中…' : '演示数据'}
         </span>
       </div>
       {error && <div className="error-tip">{error}</div>}
@@ -62,22 +60,7 @@ export default function ShipPanel({
 
       {mode === 'demo' && (
         <div className="error-tip" style={{ background: 'rgba(77,163,255,0.08)', borderColor: 'rgba(77,163,255,0.3)', color: '#9ec7ff' }}>
-          ℹ️ 全球 AIS 实时流(aisstream.io)需注册免费 API key。当前为<b>基于真实航道的演示数据</b>(船舶沿马六甲海峡 TSS 分道通航制航线移动)。
-          <button
-            className="toggle-btn" style={{ marginTop: 8, width: '100%' }}
-            onClick={() => setShowKeyInput(!showKeyInput)}
-          >🔑 {showKeyInput ? '隐藏' : '填入 aisstream key 升级真实时'}</button>
-          {showKeyInput && (
-            <div style={{ marginTop: 8 }}>
-              <input
-                className="search-input" placeholder="粘贴 aisstream.io API key"
-                value={aisKey} onChange={(e) => setAisKey(e.target.value.trim())}
-              />
-              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                免费注册 → aisstream.io → GitHub 登录 → 复制 key
-              </div>
-            </div>
-          )}
+          ℹ️ aisstream 实时流连接失败,当前为<b>基于真实航道的演示数据</b>。将自动重连。
         </div>
       )}
 

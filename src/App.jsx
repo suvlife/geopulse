@@ -106,10 +106,7 @@ export default function App() {
   visibleGroupsRef.current = sat.visibleGroups
 
   // ── 船舶状态 ──
-  const [aisKey, setAisKey] = useState(() => {
-    try { return localStorage.getItem('geopulse.aisKey') || '' } catch { return '' }
-  })
-  const ship = useShips(mode === 'ship', aisKey)
+  const ship = useShips(mode === 'ship')
   const [selectedShip, setSelectedShip] = useState(null)
   const [shipColorBy, setShipColorBy] = useState('type')
   const [visibleTypes, setVisibleTypes] = useState({})
@@ -245,10 +242,7 @@ export default function App() {
     if (map && map.getZoom() < 7) map.flyTo({ center: s.coord, zoom: 8, duration: 800 })
   }, [])
 
-  // aisKey 持久化 + 模拟速度同步
-  useEffect(() => {
-    try { if (aisKey) localStorage.setItem('geopulse.aisKey', aisKey) } catch {}
-  }, [aisKey])
+  // 模拟速度同步
   useEffect(() => {
     ship.setSimSpeed(shipSimSpeed)
   }, [shipSimSpeed, ship])
@@ -414,7 +408,6 @@ export default function App() {
             colorBy={shipColorBy} setColorBy={setShipColorBy}
             visibleTypes={visibleTypes} setVisibleTypes={setVisibleTypes}
             visibleCountries={visibleCountries} setVisibleCountries={setVisibleCountries}
-            aisKey={aisKey} setAisKey={setAisKey}
             simSpeed={shipSimSpeed} setSimSpeed={setShipSimSpeed}
             resetSim={ship.resetSim} simTimeRef={ship.simRef}
           />

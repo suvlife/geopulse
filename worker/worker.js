@@ -210,6 +210,36 @@ export default {
       return cachedProxy('https://celestrak.org/pub/satcat.csv', 86400, ctx)
     }
 
-    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail', '/tle', '/satcat'] }, p === '/' ? 200 : 404)
+    // AIS 实时流代理:客户端 WebSocket → Worker → aisstream.io
+    // key 存 Worker secret(AIS_API_KEY),客户端零配置
+    if (p === '/ais') {
+      const upgrade = request.headers.get('Upgrade')
+      if (upgrade !== 'websocket') return json({ error: 'expect websocket' }, 426)
+      if (!env.AIS_API_KEY) return json({ error: 'AIS_API_KEY not set' }, 500)
+
+      const { 0: client, 1: server } = new WebSocketPair()
+      server.accept()
+
+      // 连 aisstream 上游(Worker 自主订阅全球,客户端无需发订阅消息)
+      const upstream = new WebSocket('wss://stream.aisstream.io/v0/stream')
+      upstream.addEventListener('open', () => {
+        upstream.send(JSON.stringify({
+          APIKey: env.AIS_API_KEY,
+          BoundingBoxes: [[[-90, -180], [90, 180]]],
+        }))
+      })
+      upstream.addEventListener('message', (e) => {
+        try { server.send(e.data) } catch { /* 客户端已断开 */ }
+      })
+      upstream.addEventListener('close', () => { try { server.close() } catch {} })
+      upstream.addEventListener('error', () => { try { server.close() } catch {} })
+
+      // 客户端消息不转发(订阅由 Worker 管理)
+      server.addEventListener('close', () => { try { upstream.close() } catch {} })
+
+      return new Response(null, { status: 101, webSocket: client })
+    }
+
+    return json({ service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail', '/tle', '/satcat', '/ais'] }, p === '/' ? 200 : 404)
   },
 }

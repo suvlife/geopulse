@@ -2,121 +2,178 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { generateShips, advanceShips } from '../utils/shipSim.js'
 import { mmsiCountry } from '../data/shipData.js'
 
-// 数据模式:'demo'(模拟航道演示) | 'live'(aisstream,需 key)
-export function useShips(enabled, aisKey) {
-  const [ships, setShips] = useState([])
-  const [mode, setMode] = useState('demo')
-  const [error, setError] = useState(null)
-  const [connected, setConnected] = useState(false)
-  const shipsRef = useRef([])
-  const simRef = useRef({ time: Date.now(), speed: 60, lastReal: 0 }) // 模拟时间,默认 60x
-  const frameRef = useRef(0)
+// 数据模式:'demo'(模拟航道演示) | 'live'(aisstream 真实流)
+// key 硬编码(aisstream 是免费公开服务,key 仅用于配额隔离,非敏感)
+const AIS_WS_URL = 'wss://stream.aisstream.io/v0/stream'
+const AIS_KEY = '0065b4e691e5fc630aea2f2e0c08a5c5f1623c67'
 
-  // 初始化模拟船队
+// AIS 船型码 → 我们的船型分类
+function aisShipType(code) {
+  if (code >= 70 && code < 80) return 'cargo'
+  if (code >= 80 && code < 90) return 'tanker'
+  if (code >= 60 && code < 70) return 'passenger'
+  if (code === 30) return 'fishing'
+  if (code === 31 || code === 32 || code === 52) return 'tug'
+  if (code >= 40 && code < 50) return 'other' // 高速船
+  if (code === 50) return 'other' // 引航船
+  if (code >= 90) return 'other'
+  return 'cargo' // 默认货船(集装箱等 70-79 细分先归 cargo)
+}
+
+export function useShips(enabled) {
+  const [ships, setShips] = useState([])
+  const [mode, setMode] = useState('connecting') // connecting | live | demo
+  const [error, setError] = useState(null)
+  const shipsRef = useRef(new Map()) // mmsi → ship(Map 便于 AIS 实时更新)
+  const simRef = useRef({ time: Date.now(), speed: 60, lastReal: 0 })
+  const frameRef = useRef(0)
+  const wsRef = useRef(null)
+  const retryRef = useRef(0)
+
+  // 演示船队兜底
   const initDemo = useCallback(() => {
-    shipsRef.current = generateShips(400, 42)
-    setShips([...shipsRef.current]) // 立即同步一次
+    const demo = generateShips(400, 42)
+    shipsRef.current = new Map(demo.map((s) => [String(s.mmsi), s]))
+    setShips(demo)
     setMode('demo')
-    setError(null)
   }, [])
 
+  // AIS 实时流
   useEffect(() => {
     if (!enabled) return
-    initDemo()
-  }, [enabled, initDemo])
+    let stopped = false
+    let retryTimer
+    let ws = null
 
-  // aisstream 真实数据(有 key 时)
-  useEffect(() => {
-    if (!enabled || !aisKey) return
-    setMode('connecting')
-    let ws
-    try {
-      ws = new WebSocket('wss://stream.aisstream.io/v0/stream')
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          APIKey: aisKey,
-          BoundingBoxes: [
-            [[95, 0], [110, 8]],   // 马六甲海峡
-            [[100, -8], [115, 10]], // 爪哇海
-          ],
-        }))
+    const connect = () => {
+      if (stopped) return
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+      setMode('connecting')
+      setError(null)
+      try {
+        ws = new WebSocket(AIS_WS_URL)
+      } catch (e) {
+        setError('WebSocket 不可用')
+        initDemo()
+        return
       }
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        retryRef.current = 0
+        setMode('live')
+        setError(null)
+        try {
+          ws.send(JSON.stringify({
+            APIKey: AIS_KEY,
+            BoundingBoxes: [[[-90, -180], [90, 180]]],
+          }))
+        } catch {}
+        if (shipsRef.current.size === 0 || ![...shipsRef.current.values()].some((s) => s.live)) {
+          shipsRef.current = new Map()
+        }
+      }
+
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data)
-          if (msg.MessageType === 'PositionReport') {
-            const pr = msg.Message.PositionReport
-            const meta = msg.MetaData
+          const type = msg.MessageType
+          if (type === 'PositionReport' || type === 'StandardClassBPositionReport' || type === 'ExtendedClassBPositionReport') {
+            const pr = msg.Message?.[type]
+            const meta = msg.MetaData || {}
             const mmsi = String(pr.UserID)
-            const existing = shipsRef.current.find((s) => s.mmsi === pr.UserID)
-            const ship = existing || { id: mmsi, mmsi: pr.UserID, coord: [0, 0] }
+            if (!pr.Latitude || !pr.Longitude) return
+            const existing = shipsRef.current.get(mmsi)
+            const ship = existing || {
+              id: mmsi, mmsi: pr.UserID,
+              name: meta.ShipName?.trim() || `Vessel ${mmsi}`,
+              type: aisShipType(meta.ShipType || 70),
+              country: mmsiCountry(pr.UserID),
+              live: true,
+            }
             ship.coord = [pr.Longitude, pr.Latitude]
             ship.lat = pr.Latitude
             ship.lon = pr.Longitude
-            ship.bearing = pr.Cog ?? ship.bearing
+            ship.bearing = pr.Cog ?? pr.TrueHeading ?? ship.bearing
             ship.speedKnots = pr.Sog ?? ship.speedKnots
-            ship.name = meta?.ShipName?.trim() || ship.name || `Vessel ${mmsi}`
-            ship.country = mmsiCountry(pr.UserID)
             ship.live = true
-            if (!existing) shipsRef.current.push(ship)
+            ship.lastSeen = Date.now()
+            if (!existing) shipsRef.current.set(mmsi, ship)
+          } else if (type === 'ShipStaticData') {
+            const sd = msg.Message?.ShipStaticData
+            if (!sd) return
+            const mmsi = String(sd.UserID)
+            const existing = shipsRef.current.get(mmsi)
+            if (existing) {
+              existing.name = sd.Name?.trim() || existing.name
+              existing.type = aisShipType(sd.Type)
+              existing.dest = sd.Destination?.trim() || existing.dest
+              existing.imo = sd.ImoNumber || existing.imo
+              existing.callsign = sd.CallSign || existing.callsign
+              if (sd.Dimension) existing.length = (sd.Dimension.A || 0) + (sd.Dimension.B || 0)
+              existing.country = mmsiCountry(sd.UserID)
+            }
           }
         } catch { /* 单条消息解析失败忽略 */ }
       }
-      ws.onerror = () => {
-        setError('aisstream 连接失败,回退演示数据')
-        setMode('demo')
-        setConnected(false)
-      }
+
+      ws.onerror = () => {}
       ws.onclose = () => {
-        if (mode === 'connecting') {
-          setError('aisstream key 无效或连接被关闭,已回退演示数据')
-          setMode('demo')
+        if (wsRef.current === ws) wsRef.current = null
+        if (stopped) return
+        retryRef.current++
+        const delay = Math.min(30000, 2000 * Math.pow(1.5, retryRef.current))
+        setError(`实时流断开,${Math.round(delay / 1000)}s 后重连(第 ${retryRef.current} 次)`)
+        if (retryRef.current > 6) {
+          setError('aisstream 连接失败,已切换演示数据')
+          initDemo()
+          return
         }
-        setConnected(false)
+        retryTimer = setTimeout(connect, delay)
       }
-      setConnected(true)
-      setMode('live')
-    } catch (e) {
-      setError(e.message)
-      setMode('demo')
     }
-    return () => { try { ws?.close() } catch {} }
-  }, [enabled, aisKey])
 
-  // 模拟推进(仅 demo 模式);用 setInterval 避免 rAF 在 StrictMode 双重渲染下被取消
-  useEffect(() => {
-    if (!enabled || mode === 'live') return
-    let last = Date.now()
-    const iv = setInterval(() => {
-      const now = Date.now()
-      const dt = now - last
-      last = now
-      const sim = simRef.current
-      sim.time += dt * sim.speed
-      advanceShips(shipsRef.current, dt, sim.speed)
-      frameRef.current++
-      setShips(shipsRef.current.map((s) => ({ ...s })))
-    }, 200)
-    return () => clearInterval(iv)
-  }, [enabled, mode])
+    connect()
+    return () => {
+      stopped = true
+      clearTimeout(retryTimer)
+      try { ws?.close() } catch {}
+    }
+  }, [enabled, initDemo])
 
-  // live 模式低频同步到 React
+  // 低频同步到 React(live: 1.5s;demo: 200ms 推进)
   useEffect(() => {
-    if (!enabled || mode !== 'live') return
-    const t = setInterval(() => {
-      frameRef.current++
-      setShips(shipsRef.current.map((s) => ({ ...s })))
-    }, 1500)
-    return () => clearInterval(t)
+    if (!enabled) return
+    if (mode === 'live') {
+      const t = setInterval(() => {
+        frameRef.current++
+        setShips([...shipsRef.current.values()])
+      }, 1500)
+      return () => clearInterval(t)
+    }
+    if (mode === 'demo') {
+      let last = Date.now()
+      const iv = setInterval(() => {
+        const now = Date.now()
+        const dt = now - last
+        last = now
+        const sim = simRef.current
+        sim.time += dt * sim.speed
+        advanceShips([...shipsRef.current.values()], dt, sim.speed)
+        frameRef.current++
+        setShips([...shipsRef.current.values()].map((s) => ({ ...s })))
+      }, 200)
+      return () => clearInterval(iv)
+    }
   }, [enabled, mode])
 
   const setSimSpeed = (s) => { simRef.current.speed = s }
   const resetSim = () => { simRef.current.time = Date.now() }
 
   return {
-    ships, mode, error, connected,
+    ships, mode, error,
     shipsRef, frameRef, simRef,
     setSimSpeed, resetSim,
-    source: mode === 'live' ? 'aisstream.io' : '演示数据(真实航道模拟)',
+    source: mode === 'live' ? 'aisstream.io 实时' : '演示数据(真实航道模拟)',
   }
 }
