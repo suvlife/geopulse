@@ -13,7 +13,8 @@ const res = await pg.evaluate(() => ({
   mode: document.querySelector('.panel-title .badge')?.textContent,
   ships: document.querySelectorAll('.quake-row').length,
   msgCount: window.__aisMsgCount || 0,
-  msgSample: window.__aisMsgSample || 'none',
+  parsedSample: window.__aisParsedSample || 'none',
+  typeCount: window.__aisTypeCount || {},
 }))
 console.log(JSON.stringify(res, null, 2))
 await b.close()

@@ -85,6 +85,7 @@ export function useShips(enabled) {
           } else {
             text = String(e.data)
           }
+          if (!window.__aisRawSample) window.__aisRawSample = text.slice(0, 400)
           const msg = JSON.parse(text)
           if (!window.__aisParsedSample) window.__aisParsedSample = JSON.stringify(msg).slice(0, 400)
           if (!window.__aisTypeCount) window.__aisTypeCount = {}
