@@ -71,6 +71,8 @@ export function useShips(enabled) {
       }
 
       ws.onmessage = (e) => {
+        window.__aisMsgCount = (window.__aisMsgCount || 0) + 1
+        if (!window.__aisMsgSample) window.__aisMsgSample = e.data.slice(0, 300)
         try {
           const msg = JSON.parse(e.data)
           const type = msg.MessageType
