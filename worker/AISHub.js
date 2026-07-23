@@ -27,9 +27,10 @@ export class AISHub {
         } catch {}
       })
       ws.addEventListener('message', (e) => {
-        // 扇出给所有客户端
+        // aisstream 发二进制消息,统一转文本再扇出(避免浏览器收到 Blob 解析失败)
+        const data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)
         for (const c of this.clients) {
-          try { c.send(e.data) } catch { this.clients.delete(c) }
+          try { c.send(data) } catch { this.clients.delete(c) }
         }
       })
       const cleanup = () => {

@@ -31,9 +31,10 @@ var AISHub = class {
         }
       });
       ws.addEventListener("message", (e) => {
+        const data = typeof e.data === "string" ? e.data : new TextDecoder().decode(e.data);
         for (const c of this.clients) {
           try {
-            c.send(e.data);
+            c.send(data);
           } catch {
             this.clients.delete(c);
           }

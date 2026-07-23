@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { generateShips, advanceShips } from '../utils/shipSim.js'
 import { mmsiCountry } from '../data/shipData.js'
 
-// 数据模式:'demo'(模拟航道演示) | 'live'(aisstream 真实流,经 Worker 代理)
-// key 存 Worker secret(AIS_API_KEY),客户端零配置连 Worker 即可
-const AIS_WS_URL = 'wss://geopulse-api.guofeng.me/ais'
+// 数据模式:'demo'(模拟航道演示) | 'live'(aisstream 真实流,浏览器直连)
+// aisstream 对数据中心 IP(CF Worker)间歇限流,浏览器住宅 IP 直连最稳定
+const AIS_WS_URL = 'wss://stream.aisstream.io/v0/stream'
+const AIS_KEY = '0065b4e691e5fc630aea2f2e0c08a5c5f1623c67'
 
 // AIS 船型码 → 我们的船型分类
 function aisShipType(code) {
@@ -65,6 +66,13 @@ export function useShips(enabled) {
         retryRef.current = 0
         setMode('live')
         setError(null)
+        // 发送订阅(aisstream 协议:连接后必须立即发)
+        try {
+          ws.send(JSON.stringify({
+            APIKey: AIS_KEY,
+            BoundingBoxes: [[[-90, -180], [90, 180]]],
+          }))
+        } catch {}
         if (shipsRef.current.size === 0 || ![...shipsRef.current.values()].some((s) => s.live)) {
           shipsRef.current = new Map()
         }
