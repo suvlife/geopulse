@@ -1,12 +1,12 @@
 # GeoPulse 🌐
 
-**台风 · 地震 · 航班 · 卫星实时追踪可视化平台**
+**台风 · 地震 · 航班 · 卫星 · 船舶 五合一实时追踪可视化平台**
 
-一个纯前端 + 边缘计算的开源实时追踪站:台风路径与多机构预报、全球地震监测、类 Flightradar24 的航班追踪、**3D 地球卫星星座可视化**,全部基于**免费数据源**构建。
+一个纯前端 + 边缘计算的开源实时追踪站:台风路径与多机构预报、全球地震监测、类 Flightradar24 的航班追踪、3D 地球卫星星座、全球船舶 AIS 实时流,全部基于**免费数据源**构建。
 
 **🔗 在线访问:https://geopulse.guofeng.me**
 
-![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-4-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![satellite.js](https://img.shields.io/badge/satellite.js-SGP4-2ea44f) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV-f38020?logo=cloudflare)
+![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-4-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![satellite.js](https://img.shields.io/badge/satellite.js-SGP4-2ea44f) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV%20%2B%20DO-f38020?logo=cloudflare)
 
 ---
 
@@ -48,6 +48,15 @@
 - **点击卫星看档案**:真实照片(Wikimedia Commons)+ SATCAT 档案(所属国、发射日期、轨道周期、倾角、远/近地点)+ 实时位置速度 + 完整轨道线 + 星下点覆盖圈
 - 参考效果:trackthesky.com / satellitemap.space
 
+### 🚢 船舶追踪(AIS 实时流)
+- **默认马六甲海峡视角**,全球 AIS 实时位置(aisstream.io,浏览器直连 WebSocket,免注册)
+- 船舶按**真实航向旋转**、按**船型着色**(散货/油轮/集装箱/客轮/渔船/拖船)
+- **国籍识别**:按 MMSI MID 自动识别(巴拿马/利比里亚/马绍尔/中国/日本/新加坡/荷兰/挪威/英国等 20+ 国)
+- **多维过滤**:按船型 / 国籍 / 航速着色,独立开关过滤
+- **点击船舶看档案**:MMSI、IMO、国籍、航速、航向、目的港、载重吨、船长、实时位置
+- **港口标记**:新加坡、巴生港、雅加达等主要港口(黄色锚点)
+- aisstream 限流/过载时自动重连,断线 6 次回退演示数据
+
 ### 通用
 - 深色主题 + WebGL 高性能渲染,数千点位流畅交互
 - **多源底图自动测速**:腾讯暗色(国内快)/CARTO(海外矢量)/Esri 暗灰,顶栏可手动切换并记住偏好
@@ -61,7 +70,7 @@
 ┌────────────────────────────────────────────────┐
 │  前端 (Cloudflare Pages, 纯静态)                │
 │  React 18 + Vite + MapLibre GL + deck.gl 9     │
-│  台风/地震/航班: MapLibre + MapboxOverlay deck  │
+│  台风/地震/航班/船舶: MapLibre + MapboxOverlay  │
 │  卫星: deck.gl _GlobeView (3D 地球)             │
 │  https://geopulse.guofeng.me                   │
 └──────┬─────────────────────────┬───────────────┘
@@ -69,10 +78,11 @@
        ▼                         ▼
 ┌──────────────┐   ┌─────────────────────────────┐
 │ USGS 地震     │   │  Cloudflare Worker + KV     │
-│ istrongcloud │   │  geopulse-api.guofeng.me    │
-│ adsbdb 航线   │   │  /flights /trail /route     │
-│ airplanes.live│  │  /photo /typhoon/*          │
-└──────────────┘   │  边缘缓存 + 航迹 KV 存储      │
+│ istrongcloud │   │  + Durable Object           │
+│ adsbdb 航线   │   │  geopulse-api.guofeng.me    │
+│ airplanes.live│  │  /flights /trail /route     │
+│ aisstream AIS │  │  /photo /typhoon/* /ais     │
+└──────────────┘   │  边缘缓存 + 航迹 KV + 单例WS  │
                    └─────────────────────────────┘
 ```
 
@@ -80,8 +90,10 @@
 
 - **动画与渲染分离**:脉冲/扩散动画走独立 rAF 循环直接更新 deck.gl overlay,不触发 React 重渲染;静态图层同步应用,后台标签页不受 rAF 节流影响
 - **卫星 SGP4 逐帧推算**:每帧只传播当前时刻,30fps 连续运动;Starlink 抽样 1800 颗保证流畅
+- **船舶 AIS 直连**:aisstream 对数据中心 IP 限流,浏览器住宅 IP 直连最稳定;二进制消息用 TextDecoder 解析;React StrictMode 双渲染下用 ref 管理 WebSocket 生命周期防重复连接
 - **边缘缓存策略**:航班请求坐标取整到 0.5° 网格 → 相邻用户命中同一缓存(12s TTL),保护免费上游
 - **KV 航迹"搭便车"记录**:`/flights` 缓存未命中回源时顺手把整个区域所有飞机位置写入 KV(150s 写节流,适配免费额度 1000 写/天;每机 60 点,6h 过期),不产生任何额外上游请求
+- **Durable Object 单例**:aisstream 免费账号仅 1 条并发 WebSocket,Worker 'AISHub' 全局单例扇出给所有客户端(CF IP 被拒时浏览器直连兜底)
 - **多级降级**:每个数据源都有直连→代理→兜底数据的降级链,单点故障不白屏
 
 ## 数据源(全部免费,无需 API Key)
@@ -94,8 +106,9 @@
 | 航线/航司 | [adsbdb](https://www.adsbdb.com) | 直连优先,Worker 兜底 | callsign → 航司/起降机场;对数据中心 IP 有限流,故前端直连优先 |
 | 飞机照片 | [planespotters.net](https://www.planespotters.net/photo/api) | Worker 代理(24h 缓存) | 要求 UA 携带联系方式,浏览器无法自定义 UA 必须代理 |
 | 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | **构建时快照** | gp.php 对浏览器/数据中心 IP 限流(403),构建时抓取快照到 `/data/` 随站分发;SATCAT 档案同方案 |
+| 船舶 AIS | [aisstream.io](https://aisstream.io) | **浏览器直连 WebSocket** | 全球 AIS 实时流,免费;对数据中心 IP 限流,住宅 IP 直连最稳定;二进制消息需 TextDecoder 解析 |
 
-> ⚠️ 信息仅供参考,台风/地震请以官方预警为准;航班数据来自社区网络,不得用于运行控制。
+> ⚠️ 信息仅供参考,台风/地震请以官方预警为准;航班/船舶数据来自社区网络,不得用于运行控制。
 
 ## 快速开始
 
@@ -105,18 +118,18 @@ npm install
 npm run dev        # http://localhost:5188
 npm run build      # 产物 dist/,纯静态可部署到任意托管
 
-# 数据代理 Worker(可选;不部署则航班照片等功能降级)
+# 数据代理 Worker(可选;不部署则航班照片/AIS 代理等功能降级)
 cd worker
 npx wrangler kv namespace create TRAILS   # 首次:创建 KV 并把 id 填入 wrangler.toml
 npx wrangler deploy
 ```
 
-自部署需要修改的常量:`src/hooks/useFlights.js` 和 `src/hooks/useTyphoons.js` 里的 `API` 地址指向你的 Worker 域名。
+自部署需要修改的常量:`src/hooks/useFlights.js`、`src/hooks/useTyphoons.js`、`src/hooks/useShips.js` 里的 API/Worker 地址指向你的域名。
 
 ## 部署
 
 - **前端**:push 到 master → GitHub Actions 自动构建并部署 Cloudflare Pages(`.github/workflows/deploy.yml`,需配置 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 两个 Secrets)
-- **Worker**:改动 `worker/` 后手动 `wrangler deploy`(低频改动,未纳入 CI)
+- **Worker**:改动 `worker/` 后手动 `wrangler deploy`(低频改动,未纳入 CI);AIS 相关 secret:`npx wrangler secret put AIS_API_KEY`
 
 ## 开发说明
 
@@ -124,6 +137,7 @@ npx wrangler deploy
 - 调试全局:`window.__map`(MapLibre 实例)、`window.__overlay`(deck.gl overlay)
 - `vite.config.js` 中通过 alias 屏蔽了 satellite.js 的 wasm worker 动态导入(`#wasm-single-thread`/`#wasm-multi-thread` → `src/utils/satellite-wasm-stub.js`),强制使用纯 JS SGP4 实现,避免浏览器打包失败
 - 腾讯/高德底图为 GCJ-02 坐标系,与 WGS-84 数据叠加在省级缩放(z≤8)偏差 <1px 可忽略;街道级精度请切 CARTO/Esri
+- AIS 船舶的船型字段在 aisstream 的 PositionReport 里常缺失,要等同船 ShipStaticData 到达后才会从"散货船"细分为集装箱/油轮等(AIS 协议特性)
 
 ## Roadmap
 
@@ -134,7 +148,7 @@ npx wrangler deploy
 - [ ] 用户定位:距我最近的地震 / 台风到达我所在城市倒计时
 - [ ] 历史台风库与相似路径检索
 - [ ] 机场模式:点击机场看进出港航班列表
-- [ ] 卫星模式:ISS/Starlink 实时过境预报、地面观察者视角
+- [ ] 船舶:港口进出港列表、航线回放、历史轨迹
 
 ## License
 
@@ -142,4 +156,4 @@ MIT
 
 ## 致谢
 
-数据服务:USGS · istrongcloud · adsb.lol · airplanes.live · adsbdb · planespotters.net · 腾讯地图 · CARTO · Esri —— 感谢这些免费开放的数据与服务让本项目成为可能。
+数据服务:USGS · istrongcloud · adsb.lol · airplanes.live · adsbdb · planespotters.net · CelesTrak · aisstream.io · 腾讯地图 · CARTO · Esri —— 感谢这些免费开放的数据与服务让本项目成为可能。
