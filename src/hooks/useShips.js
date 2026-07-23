@@ -70,11 +70,22 @@ export function useShips(enabled) {
         }
       }
 
-      ws.onmessage = (e) => {
+      ws.binaryType = 'arraybuffer' // aisstream 发二进制消息
+      ws.onmessage = async (e) => {
         window.__aisMsgCount = (window.__aisMsgCount || 0) + 1
-        if (!window.__aisMsgSample) window.__aisMsgSample = e.data.slice(0, 300)
         try {
-          const msg = JSON.parse(e.data)
+          // aisstream 消息是二进制(Blob/ArrayBuffer),需转文本
+          let text
+          if (typeof e.data === 'string') {
+            text = e.data
+          } else if (e.data instanceof ArrayBuffer) {
+            text = new TextDecoder().decode(e.data)
+          } else if (e.data instanceof Blob) {
+            text = await e.data.text()
+          } else {
+            text = String(e.data)
+          }
+          const msg = JSON.parse(text)
           const type = msg.MessageType
           if (type === 'PositionReport' || type === 'StandardClassBPositionReport' || type === 'ExtendedClassBPositionReport') {
             const pr = msg.Message?.[type]
