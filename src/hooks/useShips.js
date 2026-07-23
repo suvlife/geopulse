@@ -27,6 +27,7 @@ export function useShips(enabled) {
   const simRef = useRef({ time: Date.now(), speed: 60, lastReal: 0 })
   const frameRef = useRef(0)
   const wsRef = useRef(null)
+  const ctrlRef = useRef(null)
   const retryRef = useRef(0)
 
   // 演示船队兜底
@@ -40,29 +41,30 @@ export function useShips(enabled) {
   // AIS 实时流
   useEffect(() => {
     if (!enabled) return
-    let stopped = false
-    let retryTimer
-    let ws = null
+    window.__shipEffectRan = (window.__shipEffectRan || 0) + 1
+    // 用 ref 而非闭包变量,避免 StrictMode 双渲染时第二次 effect 拿到第一次的 stopped=true
+    const ctrl = { stopped: false, retryTimer: null, ws: null }
+    ctrlRef.current = ctrl
 
     const connect = () => {
-      if (stopped) return
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+      if (ctrl.stopped) return
+      if (ctrl.ws && (ctrl.ws.readyState === WebSocket.OPEN || ctrl.ws.readyState === WebSocket.CONNECTING)) return
       setMode('connecting')
       setError(null)
       try {
-        ws = new WebSocket(AIS_WS_URL)
+        ctrl.ws = new WebSocket(AIS_WS_URL)
       } catch (e) {
         setError('WebSocket 不可用')
         initDemo()
         return
       }
-      wsRef.current = ws
+      wsRef.current = ctrl.ws
+      const ws = ctrl.ws
 
       ws.onopen = () => {
         retryRef.current = 0
         setMode('live')
         setError(null)
-        // Worker 代理已自主订阅,客户端无需发订阅消息
         if (shipsRef.current.size === 0 || ![...shipsRef.current.values()].some((s) => s.live)) {
           shipsRef.current = new Map()
         }
@@ -114,7 +116,7 @@ export function useShips(enabled) {
       ws.onerror = () => {}
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
-        if (stopped) return
+        if (ctrl.stopped) return
         retryRef.current++
         const delay = Math.min(30000, 2000 * Math.pow(1.5, retryRef.current))
         setError(`实时流断开,${Math.round(delay / 1000)}s 后重连(第 ${retryRef.current} 次)`)
@@ -123,15 +125,15 @@ export function useShips(enabled) {
           initDemo()
           return
         }
-        retryTimer = setTimeout(connect, delay)
+        ctrl.retryTimer = setTimeout(connect, delay)
       }
     }
 
     connect()
     return () => {
-      stopped = true
-      clearTimeout(retryTimer)
-      try { ws?.close() } catch {}
+      ctrl.stopped = true
+      clearTimeout(ctrl.retryTimer)
+      try { ctrl.ws?.close() } catch {}
     }
   }, [enabled, initDemo])
 
