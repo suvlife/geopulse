@@ -7,17 +7,19 @@ import { mmsiCountry } from '../data/shipData.js'
 const AIS_WS_URL = 'wss://stream.aisstream.io/v0/stream'
 const AIS_KEY = '0065b4e691e5fc630aea2f2e0c08a5c5f1623c67'
 
-// AIS 船型码 → 我们的船型分类
+// AIS 船型码 → 我们的船型分类(AIS 标准:70-79 货船,80-89 油轮,60-69 客船,30 渔船)
+// 集装箱船 AIS 用 70-79,但 aisstream MetaData.ShipType 常缺失,此时从 ShipStaticData.Type 补
 function aisShipType(code) {
-  if (code >= 70 && code < 80) return 'cargo'
-  if (code >= 80 && code < 90) return 'tanker'
-  if (code >= 60 && code < 70) return 'passenger'
-  if (code === 30) return 'fishing'
-  if (code === 31 || code === 32 || code === 52) return 'tug'
-  if (code >= 40 && code < 50) return 'other' // 高速船
-  if (code === 50) return 'other' // 引航船
-  if (code >= 90) return 'other'
-  return 'cargo' // 默认货船(集装箱等 70-79 细分先归 cargo)
+  const c = Number(code)
+  if (c >= 80 && c < 90) return 'tanker'
+  if (c >= 70 && c < 80) return 'cargo'
+  if (c >= 60 && c < 70) return 'passenger'
+  if (c === 30) return 'fishing'
+  if (c === 31 || c === 32 || c === 52 || c === 53) return 'tug'
+  if (c >= 40 && c < 50) return 'other' // 高速船
+  if (c === 50 || c === 51) return 'other' // 引航船/搜救船
+  if (c >= 33 && c < 37) return 'other' // 疏浚/军用
+  return 'cargo' // 默认
 }
 
 export function useShips(enabled) {
