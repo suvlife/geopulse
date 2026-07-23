@@ -9,3 +9,12 @@ routes = [
 [[kv_namespaces]]
 binding = "TRAILS"
 id = "2167fdb496af412cafe56adb0c47b0d1"
+
+[[durable_objects.bindings]]
+name = "AIS_HUB"
+class_name = "AISHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AISHub"]
+
