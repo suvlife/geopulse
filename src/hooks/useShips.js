@@ -86,6 +86,10 @@ export function useShips(enabled) {
             text = String(e.data)
           }
           const msg = JSON.parse(text)
+          if (!window.__aisParsedSample) window.__aisParsedSample = JSON.stringify(msg).slice(0, 400)
+          if (!window.__aisTypeCount) window.__aisTypeCount = {}
+          const t = msg.MessageType
+          window.__aisTypeCount[t] = (window.__aisTypeCount[t] || 0) + 1
           const type = msg.MessageType
           if (type === 'PositionReport' || type === 'StandardClassBPositionReport' || type === 'ExtendedClassBPositionReport') {
             const pr = msg.Message?.[type]
