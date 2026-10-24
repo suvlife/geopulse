@@ -15,7 +15,7 @@ export default function SatellitePanel({
   visibleGroups, setVisibleGroups,
   speed, setTimeSpeed, resetTime, simTimeRef,
   showFootprint, setShowFootprint,
-  loading, progress, error, updatedAt,
+  loading, progress, error, updatedAt, tleAge, tleWarn, tleExpired,
 }) {
   const [query, setQuery] = useState('')
   const [clock, setClock] = useState('')
@@ -24,7 +24,7 @@ export default function SatellitePanel({
   useEffect(() => {
     const t = setInterval(() => {
       if (simTimeRef.current) setClock(fmtSimTime(simTimeRef.current.time))
-    }, 250)
+    }, 1000)
     return () => clearInterval(t)
   }, [simTimeRef])
 
@@ -47,14 +47,25 @@ export default function SatellitePanel({
     ? ORBIT_FALLBACK.find((o) => selected.alt <= o.maxAlt) || ORBIT_FALLBACK[0]
     : null
   const total = satellites.length
+  const ageText = tleAge == null ? null
+    : tleAge < 3600e3 ? `${Math.round(tleAge / 60000)} 分钟`
+    : tleAge < 86400e3 ? `${(tleAge / 3600e3).toFixed(1)} 小时`
+    : `${(tleAge / 86400e3).toFixed(1)} 天`
 
   return (
     <div className="panel">
       <div className="panel-title">
         🛰 卫星追踪
-        <span className={error ? 'badge demo' : 'badge live'}>{error ? '加载失败' : 'CelesTrak 实时'}</span>
+        <span className={error || tleWarn ? 'badge demo' : 'badge live'}>
+          {error ? '加载失败' : tleExpired ? 'TLE 已过期' : tleWarn ? 'TLE 非实时' : 'CelesTrak 实时'}
+        </span>
       </div>
       {error && <div className="error-tip">TLE 加载失败:{error} · 将自动重试</div>}
+      {!error && tleWarn && (
+        <div className="error-tip">
+          TLE 快照已 {ageText}未更新{tleExpired ? ',低轨卫星位置误差可能很大' : ''}。请等待构建快照刷新或点击 ⟳ 重试。
+        </div>
+      )}
 
       {loading && progress > 0 && progress < 1 && (
         <div className="load-bar"><i style={{ width: `${Math.round(progress * 100)}%` }} /></div>
@@ -206,7 +217,7 @@ export default function SatellitePanel({
       </div>
 
       <div className="foot-note">
-        数据:CelesTrak NORAD GP(TLE,2h 刷新)+ SATCAT 档案 · SGP4 本地推算,卫星逐帧连续运动 · 时间可加速至 1000× · 3D 地球可拖拽/缩放/旋转,点任意卫星查看照片与档案
+        数据:CelesTrak NORAD GP(TLE,每 2h 刷新/构建快照,顶部显示纪元时效)+ SATCAT 档案 · SGP4 本地推算,卫星逐帧连续运动 · 时间可加速至 1000× · 3D 地球可拖拽/缩放/旋转,点任意卫星查看照片与档案
       </div>
     </div>
   )

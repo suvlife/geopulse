@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import maplibregl from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
+// MapLibre 6 通过 new URL(..., import.meta.url) 动态加载 worker,Vite 无法在打包时解析;
+// 用 ?url 让 Vite 把 worker 作为静态资源输出,再显式指定地址
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+maplibregl.setWorkerUrl(maplibreWorkerUrl)
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import { useEarthquakes } from './hooks/useEarthquakes.js'
 import { useTyphoons } from './hooks/useTyphoons.js'
@@ -21,6 +25,20 @@ import { fmtTime } from './utils/geo.js'
 import { TY_CATS } from './utils/scales.js'
 import { BASEMAPS, getBasemap, loadBasemapPref, saveBasemapPref, pickFastestBasemap } from './utils/basemaps.js'
 
+// deck.gl tooltip 支持 html 字符串,第三方字段必须先转义,防注入
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+))
+
+// 地图视野 → AIS 视野 bbox [w,s,e,n];全球视野返回 null(不过滤)
+function shipViewport(map) {
+  const b = map.getBounds()
+  const w = b.getWest(), e = b.getEast(), s = b.getSouth(), n = b.getNorth()
+  if (!Number.isFinite(w) || !Number.isFinite(e) || e - w >= 350) return null
+  const fix = (l) => ((l + 180) % 360 + 360) % 360 - 180 // 跨 180° 经线时自然形成 w > e
+  return [fix(w), Math.max(-90, s), fix(e), Math.min(90, n)]
+}
+
 function getTooltip({ object }) {
   if (!object) return null
   const style = {
@@ -30,23 +48,23 @@ function getTooltip({ object }) {
   }
   if (object.place != null) {
     return {
-      html: `<b>M${object.mag.toFixed(1)}</b> ${object.place}<br/>
-        ${fmtTime(object.time)} · 深度 ${object.depth.toFixed(0)} km${object.tsunami ? '<br/>⚠️ 伴随海啸预警' : ''}`,
+      html: `<b>M${object.mag.toFixed(1)}</b> ${esc(object.place)}<br/>
+        ${fmtTime(object.time)} · 深度 ${object.depth.toFixed(0)} km${object.tsunami ? '<br/>⚠️ 位于海啸预警区' : ''}`,
       style,
     }
   }
   if (object.cat != null) {
     const cat = TY_CATS[object.cat]?.label || object.cat
-    const head = object.agency ? `【${object.agency} 预报】` : ''
+    const head = object.agency ? `【${esc(object.agency)} 预报】` : ''
     return {
-      html: `${head}<b>${cat}</b><br/>${fmtTime(object.time)}<br/>
+      html: `${head}<b>${esc(cat)}</b><br/>${fmtTime(object.time)}<br/>
         风速 ${object.wind} m/s${object.pressure ? ` · 气压 ${object.pressure} hPa` : ''}`,
       style,
     }
   }
   if (object.hex != null && object.callsign != null) {
     return {
-      html: `<b>${object.callsign}</b>${object.type ? ` · ${object.type}` : ''}<br/>
+      html: `<b>${esc(object.callsign)}</b>${object.type ? ` · ${esc(object.type)}` : ''}<br/>
         ${object.onGround ? '地面' : object.altM != null ? `高度 ${object.altM} m` : ''}${object.speedKmh != null ? ` · ${object.speedKmh} km/h` : ''}<br/>
         <span style="opacity:0.7">点击追踪航路</span>`,
       style,
@@ -62,6 +80,7 @@ export default function App() {
 
   const [mode, setMode] = useState('typhoon')
   const [now, setNow] = useState(Date.now())
+  const isSatellite = mode === 'satellite'
 
   // ── 底图：本地偏好 → 默认腾讯（国内快），无偏好时后台测速自动切换 ──
   const [basemapId, setBasemapId] = useState(() => loadBasemapPref() || 'tencent-dark')
@@ -89,6 +108,10 @@ export default function App() {
   const [speed, setSpeed] = useState(2)
   const [agencies, setAgencies] = useState({})
 
+  // 数据刷新把时间轴推到末尾时可能短暂越界(渲染先于 effect),统一用安全下标
+  const trackLen = typhoon?.track?.length || 0
+  const safeIdx = trackLen ? Math.min(Math.max(timeIdx, 0), trackLen - 1) : 0
+
   // ── 航班状态 ──
   const BEIJING = [116.4, 39.9]
   const [flightCenter, setFlightCenter] = useState(BEIJING)
@@ -106,7 +129,8 @@ export default function App() {
   visibleGroupsRef.current = sat.visibleGroups
 
   // ── 船舶状态 ──
-  const ship = useShips(mode === 'ship')
+  const [shipBbox, setShipBbox] = useState(null) // 地图视野,用于 AIS 下行过滤
+  const ship = useShips(mode === 'ship', shipBbox)
   const [selectedShip, setSelectedShip] = useState(null)
   const [shipColorBy, setShipColorBy] = useState('type')
   const [visibleTypes, setVisibleTypes] = useState({})
@@ -122,7 +146,10 @@ export default function App() {
       zoom: 3.6,
       minZoom: 1,
     })
-    map.on('load', () => setMapReady(true))
+    map.on('load', () => {
+      setMapReady(true)
+      setShipBbox(shipViewport(map))
+    })
     // 地图移动后更新航班查询中心(防抖)
     let moveTimer
     map.on('moveend', () => {
@@ -130,6 +157,7 @@ export default function App() {
       moveTimer = setTimeout(() => {
         const c = map.getCenter()
         setFlightCenter([c.lng, c.lat])
+        setShipBbox(shipViewport(map))
       }, 700)
     })
     const overlay = new MapboxOverlay({ interleaved: false, layers: [], getTooltip })
@@ -142,7 +170,10 @@ export default function App() {
     window.__overlay = overlay
     // 无手动偏好时测速选最快底图
     if (!loadBasemapPref()) pickFastestBasemap().then((id) => setBasemapId(id))
-    return () => map.remove()
+    return () => {
+      clearTimeout(moveTimer)
+      map.remove()
+    }
   }, [])
 
   // 底图切换
@@ -180,6 +211,13 @@ export default function App() {
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
+    if (mode === 'satellite') {
+      // 卫星模式用独立 3D 地球,MapLibre 常驻后台(不卸载,避免白屏)
+      overlayRef.current?.setProps({ layers: [] })
+      return
+    }
+    // 从卫星模式返回时容器尺寸可能变化,恢复渲染
+    requestAnimationFrame(() => map.resize())
     if (mode === 'quake') {
       map.flyTo({ center: [150, 8], zoom: 1.6, duration: 1200 })
     } else if (mode === 'ship') {
@@ -225,7 +263,7 @@ export default function App() {
     setSelectedFlight(f.hex)
     setFlightInfo(null)
     fl.loadServerTrail(f.hex)
-    fl.loadFlightInfo(f.hex, f.callsign).then(setFlightInfo)
+    fl.loadFlightInfo(f.hex, f.callsign).then((info) => { if (info) setFlightInfo(info) })
     const map = mapRef.current
     if (map && map.getZoom() < 6) map.flyTo({ center: f.coord, zoom: 6.5, duration: 800 })
   }, [fl.loadServerTrail, fl.loadFlightInfo])
@@ -249,6 +287,7 @@ export default function App() {
 
   // 构建静态图层（不含动画帧）
   const layers = useMemo(() => {
+    if (mode === 'satellite') return [] // 卫星页用 deck.gl Globe,隐藏模板不重建图层
     if (mode === 'quake') {
       return buildQuakeLayers({
         quakes, colorBy: quakeParams.colorBy, heatmap: quakeParams.heatmap,
@@ -269,11 +308,12 @@ export default function App() {
         onClick: (info) => info.object && onSelectShip(info.object),
       })
     }
-    return buildTyphoonLayers({ typhoon, timeIdx, agencies, onClickPoint: onClickTrackPoint })
-  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, timeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightInfo, flightCenter, onSelectFlight, ship.ships, selectedShip, shipColorBy, visibleTypes, visibleCountries, onSelectShip])
+    return buildTyphoonLayers({ typhoon, timeIdx: safeIdx, agencies, onClickPoint: onClickTrackPoint })
+  }, [mode, quakes, quakeParams.colorBy, quakeParams.heatmap, typhoon, safeIdx, agencies, onSelectQuake, onClickTrackPoint, fl.flights, fl.trails, fl.trailsVersion, selectedFlight, flightInfo, flightCenter, onSelectFlight, ship.ships, selectedShip, shipColorBy, visibleTypes, visibleCountries, onSelectShip])
 
   // 脉冲动画源
   const pulseSource = useMemo(() => {
+    if (mode === 'satellite') return null
     if (mode === 'quake') {
       if (quakeParams.heatmap) return null
       const recent = quakes.filter((q) => now - q.time < 24 * 3.6e6 && q.mag >= 4.5)
@@ -286,9 +326,9 @@ export default function App() {
     if (mode === 'ship') {
       return selectedShip ? { type: 'ship', data: selectedShip } : null
     }
-    const current = typhoon?.track[timeIdx]
+    const current = typhoon?.track[safeIdx]
     return current ? { type: 'typhoon', data: current } : null
-  }, [mode, quakes, quakeParams.heatmap, typhoon, timeIdx, now, fl.flights, selectedFlight, selectedShip])
+  }, [mode, quakes, quakeParams.heatmap, typhoon, safeIdx, now, fl.flights, selectedFlight, selectedShip])
 
   // rAF 动画循环：直接更新 overlay，不触发 React 渲染
   useEffect(() => {
@@ -316,10 +356,9 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [layers, pulseSource])
 
-  const updatedAt = mode === 'quake' ? eq.updatedAt : mode === 'flight' ? fl.updatedAt : mode === 'satellite' ? sat.updatedAt : ty.updatedAt
-  const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : mode === 'satellite' ? sat.refresh : ty.refresh
+  const updatedAt = mode === 'quake' ? eq.updatedAt : mode === 'flight' ? fl.updatedAt : mode === 'satellite' ? sat.updatedAt : mode === 'ship' ? ship.updatedAt : ty.updatedAt
+  const refresh = mode === 'quake' ? eq.refresh : mode === 'flight' ? fl.refresh : mode === 'satellite' ? sat.refresh : mode === 'ship' ? ship.refresh : ty.refresh
 
-  const isSatellite = mode === 'satellite'
   const isShip = mode === 'ship'
 
   return (
@@ -328,7 +367,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-logo">🌐</span>
           <span className="brand-name">GeoPulse</span>
-          <span className="brand-sub">台风 · 地震实时追踪</span>
+          <span className="brand-sub">台风 · 地震 · 航班 · 卫星 · 船舶</span>
         </div>
         <nav className="tabs">
           <button className={mode === 'typhoon' ? 'tab active' : 'tab'} onClick={() => setMode('typhoon')}>🌀 台风</button>
@@ -349,13 +388,18 @@ export default function App() {
             </select>
           )}
           <span className="pulse-dot" />
-          <span className="updated">{updatedAt ? `更新于 ${fmtTime(updatedAt)}` : '加载中…'}</span>
+          <span className="updated">
+            {updatedAt ? `更新于 ${fmtTime(updatedAt)}` : isShip ? (ship.mode === 'demo' ? '演示数据' : 'AIS 连接中…') : '加载中…'}
+          </span>
           <button className="refresh-btn" onClick={refresh} title="立即刷新">⟳</button>
         </div>
       </header>
 
       <div className="map-wrap">
-        {isSatellite ? (
+        {/* 地图常驻:卫星模式只隐藏,不卸载(卸载会让 MapLibre canvas 脱离 DOM,返回后白屏) */}
+        <div ref={mapEl} className="map" style={{ visibility: isSatellite ? 'hidden' : 'visible' }} />
+        {!mapReady && !isSatellite && <div className="map-loading"><span className="spinner" />底图加载中…</div>}
+        {isSatellite && (
           <SatelliteGlobe
             positionsRef={sat.positionsRef}
             frameRef={sat.frameRef}
@@ -365,11 +409,6 @@ export default function App() {
             showFootprint={showFootprint}
             onClick={onSelectSat}
           />
-        ) : (
-          <>
-            <div ref={mapEl} className="map" />
-            {!mapReady && <div className="map-loading"><span className="spinner" />底图加载中…</div>}
-          </>
         )}
         {isSatellite ? (
           <SatellitePanel
@@ -389,6 +428,9 @@ export default function App() {
             progress={sat.progress}
             error={sat.error}
             updatedAt={sat.updatedAt}
+            tleAge={sat.tleAge}
+            tleWarn={sat.tleWarn}
+            tleExpired={sat.tleExpired}
           />
         ) : mode === 'quake' ? (
           <QuakePanel
@@ -414,10 +456,10 @@ export default function App() {
         ) : (
           <TyphoonPanel
             typhoons={ty.typhoons} activeId={typhoon?.id} setActiveId={setActiveId} typhoon={typhoon}
-            timeIdx={timeIdx} setTimeIdx={setTimeIdx}
+            timeIdx={safeIdx} setTimeIdx={setTimeIdx}
             playing={playing} setPlaying={setPlaying} speed={speed} setSpeed={setSpeed}
             agencies={agencies} setAgencies={setAgencies}
-            source={ty.source} now={now}
+            source={ty.source} error={ty.error} now={now}
           />
         )}
         <Legend mode={mode} colorBy={quakeParams.colorBy} />

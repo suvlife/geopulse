@@ -171,7 +171,7 @@ export default function ShipPanel({
       </div>
 
       <div className="foot-note">
-        数据源:{source} · 船舶按真实航道(马六甲海峡 TSS 分道通航制)模拟移动,可切换真实 aisstream.io 流 · 国籍按 MMSI MID 识别 · 点击船查看完整档案
+        数据源:{source} · 实时流经 Worker 单例代理 aisstream(Key 存服务端),连续重连失败时自动回退到基于真实航道的演示数据 · 国籍按 MMSI MID 识别 · 点击船查看完整档案
       </div>
     </div>
   )

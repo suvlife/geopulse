@@ -90,7 +90,7 @@ export function buildFlightLayers({ flights, trails, selectedHex, selectedRoute,
   const selected = flights.find((f) => f.hex === selectedHex)
 
   // 航线:起飞机场 →(实线,已飞)→ 飞机 →(虚线,待飞)→ 目的机场
-  if (selected && selectedRoute?.origin && selectedRoute?.destination) {
+  if (selected && selectedRoute?.origin?.coord && selectedRoute?.destination?.coord) {
     const { origin, destination } = selectedRoute
     const flown = greatCircle(origin.coord, selected.coord)
     const remain = greatCircle(selected.coord, destination.coord)

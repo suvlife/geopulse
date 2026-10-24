@@ -29,16 +29,17 @@ export const GROUP_LABELS = {
   others: '其他 Others',
 }
 
-// 地球纹理:NASA Blue Marble 风(昼夜分面用 Sunlit 效果更好,这里用暗色版)
-const GLOBE_TILES = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+// 地球纹理:Esri World Dark Gray(免费、无需 Key)
+// 原 CARTO dark_all 栅格现在返回 "API KEY REQUIRED" 水印,CelesTrak/OSM 之外最稳的免费暗色底图
+const RASTER_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
 
-// 实际用 raster 版,CARTO 暗色
-const RASTER_TILES = 'https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png'
-
-// 星下点覆盖圈
-function footprintRing(lon, lat, alt, radiusKm = 400) {
+// 星下点覆盖圈:按轨道高度算真实地平线半径 R·acos(R/(R+h)),
+// 固定 400km 会把 1000km 高的卫星覆盖圈画小一个数量级
+function footprintRing(lon, lat, alt, radiusKm) {
   const R = 6371
-  const alpha = (radiusKm / R) * (180 / Math.PI)
+  const h = Math.max(0, alt || 0) / 1000
+  const radius = radiusKm ?? R * Math.acos(Math.min(1, R / (R + h)))
+  const alpha = (radius / R) * (180 / Math.PI)
   const ring = []
   for (let b = 0; b <= 360; b += 10) {
     const br = (b * Math.PI) / 180
@@ -100,7 +101,7 @@ export function buildSatelliteLayers({ satellites, selected, orbitPath, visibleG
       id: 'globe-tiles',
       data: RASTER_TILES,
       minZoom: 0,
-      maxZoom: 9,
+      maxZoom: 13,
       tileSize: 256,
       parameters: { depthWriteEnabled: true, depthTest: true },
       renderSubLayers: (props) => {

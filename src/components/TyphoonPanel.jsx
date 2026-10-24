@@ -1,9 +1,7 @@
 import { useMemo } from 'react'
-import { TY_CATS, catColor, AGENCY_COLORS } from '../utils/scales.js'
+import { TY_CATS, catColor, AGENCY_COLORS, AGENCY_NAMES } from '../utils/scales.js'
 import { cityImpact, fmtCountdown, fmtTime } from '../utils/geo.js'
 import { CITIES } from '../data/sampleTyphoon.js'
-
-const AGENCY_NAMES = { CMA: '中央气象台', JMA: '日本气象厅', JTWC: '美国 JTWC', HKO: '香港天文台', KMA: '韩国气象厅', CWA: '台湾气象署' }
 
 const GUIDES = [
   { icon: '🏠', title: '居家防护', tips: ['关紧门窗，加固易被吹动的搭建物', '阳台花盆、杂物移入室内', '储备 3 天饮用水、食品、照明和充电宝'] },
@@ -14,10 +12,12 @@ const GUIDES = [
 export default function TyphoonPanel({
   typhoons, activeId, setActiveId, typhoon,
   timeIdx, setTimeIdx, playing, setPlaying, speed, setSpeed,
-  agencies, setAgencies, source, now,
+  agencies, setAgencies, source, error, now,
 }) {
-  const current = typhoon?.track[timeIdx]
-  const isLatest = typhoon && timeIdx === typhoon.track.length - 1
+  // 双保险:即便上层传入的下标越界(切换台风瞬间),也不让整页崩溃
+  const idx = typhoon ? Math.min(Math.max(timeIdx, 0), typhoon.track.length - 1) : 0
+  const current = typhoon?.track[idx]
+  const isLatest = typhoon && idx === typhoon.track.length - 1
 
   const impacts = useMemo(() => {
     if (!typhoon) return []
@@ -28,7 +28,7 @@ export default function TyphoonPanel({
       .sort((a, b) => a.hit.time - b.hit.time)
   }, [typhoon])
 
-  if (!typhoon) return (
+  if (!typhoon || !current) return (
     <div className="panel"><div className="panel-title">🌀 台风追踪</div><div className="empty">正在获取台风数据…</div></div>
   )
 
@@ -42,6 +42,14 @@ export default function TyphoonPanel({
           {source === 'live' ? '实时数据' : source === 'history' ? '近期台风(已停编)' : '演示数据'}
         </span>
       </div>
+
+      {error && (
+        <div className="error-tip">
+          {source === 'sample'
+            ? `数据源不可用:${error},当前为演示数据`
+            : `数据源刷新失败:${error},继续显示上一份数据`}
+        </div>
+      )}
 
       {typhoons.length > 1 && (
         <div className="control-row">
@@ -92,7 +100,7 @@ export default function TyphoonPanel({
           {playing ? '⏸' : '▶'}
         </button>
         <input
-          type="range" min="0" max={typhoon.track.length - 1} value={timeIdx}
+          type="range" min="0" max={typhoon.track.length - 1} value={idx}
           onChange={(e) => { setPlaying(false); setTimeIdx(+e.target.value) }}
         />
         <button className="speed-btn" onClick={() => setSpeed(speed >= 4 ? 1 : speed * 2)}>{speed}x</button>

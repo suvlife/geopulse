@@ -3,11 +3,19 @@ name: Deploy to Cloudflare Pages
 on:
   push:
     branches: [master]
+  # 每 6 小时重建一次:让 public/data 里的 TLE 快照保持新鲜(SGP4 依赖新鲜纪元)
+  schedule:
+    - cron: '15 */6 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,6 +23,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=critical
       - run: npm run build
       - uses: cloudflare/wrangler-action@v3
         with:

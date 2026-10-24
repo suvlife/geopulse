@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { TY_CATS, AGENCY_COLORS } from '../utils/scales.js'
+import { TY_CATS, AGENCY_COLORS, AGENCY_NAMES } from '../utils/scales.js'
 import { GROUP_COLORS, GROUP_LABELS } from '../layers/satelliteLayers.js'
 import { SHIP_TYPE_COLORS, SHIP_TYPE_LABELS } from '../data/shipData.js'
 
@@ -11,8 +11,6 @@ const DEPTH_ITEMS = [
   ['<10km', [255, 90, 70]], ['<30', [255, 160, 60]], ['<70', [255, 220, 80]],
   ['<150', [110, 200, 120]], ['<300', [70, 150, 220]], ['300+', [120, 90, 220]],
 ]
-const AGENCY_NAMES = { CMA: '中央气象台', JMA: '日本气象厅', JTWC: '美国 JTWC' }
-
 const ALT_ITEMS = [
   ['地面', [150, 155, 170]], ['低空', [255, 207, 77]], ['3km', [124, 224, 122]],
   ['6km', [77, 163, 255]], ['9km', [143, 107, 255]], ['12km+', [210, 77, 255]],
@@ -93,7 +91,7 @@ export default function Legend({ mode, colorBy }) {
           <div className="legend-items" style={{ marginTop: 6 }}>
             {Object.entries(AGENCY_COLORS).map(([a, c]) => (
               <span key={a} className="legend-item">
-                <i className="dash" style={{ background: `rgb(${c.join(',')})` }} />{AGENCY_NAMES[a]}
+                <i className="dash" style={{ background: `rgb(${c.join(',')})` }} />{AGENCY_NAMES[a] || a}
               </span>
             ))}
           </div>

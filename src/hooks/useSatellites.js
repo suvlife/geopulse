@@ -7,8 +7,11 @@ const FULL_URLS = ['/data/active.tle', 'https://geopulse-api.guofeng.me/tle?grou
 const SATCAT_URLS = ['/data/satcat.csv', 'https://geopulse-api.guofeng.me/satcat']
 
 const TLE_REFRESH = 2 * 3600e3
-const PROP_INTERVAL = 400
+const PROP_INTERVAL = 1000 // 全量 SGP4 每秒一次,帧间线性插值;400ms 时 1.6 万颗 ≈ 50ms/次
 const PANEL_INTERVAL = 2000
+const TLE_FRESH_MS = 6 * 3600e3 // 6h 内视为新鲜,不再请求 Worker
+const TLE_WARN_MS = 24 * 3600e3 // 超过 24h 标记“非实时”
+const TLE_EXPIRE_MS = 7 * 24 * 3600e3 // 超过 7 天视为过期
 
 // 按名称归类(CelesTrak 命名规则)
 const NAME_RULES = [
@@ -30,23 +33,38 @@ function classify(name) {
   return 'others'
 }
 
-function parseTLE(text) {
+// TLE 第 1 行第 19-32 列 = 纪元(YYDDD.DDDDDDDD)
+export function tleEpochMs(l1) {
+  const yy = parseInt(l1.slice(18, 20), 10)
+  const doy = parseFloat(l1.slice(20, 32))
+  if (!Number.isFinite(yy) || !Number.isFinite(doy)) return NaN
+  const year = yy < 57 ? 2000 + yy : 1900 + yy
+  return Date.UTC(year, 0, 1) + (doy - 1) * 864e5
+}
+
+export function parseTLE(text) {
   const lines = text.split('\n')
   const recs = []
+  let epochMax = 0
   for (let i = 0; i + 2 < lines.length; i += 3) {
     const name = lines[i].trim()
     const l1 = lines[i + 1].trim()
     const l2 = lines[i + 2].trim()
     if (!name || !l1.startsWith('1 ') || !l2.startsWith('2 ')) continue
+    if (l1.length < 69 || l2.length < 69) continue // 截断的 TLE 直接跳过
     try {
       const satrec = twoline2satrec(l1, l2)
-      if (satrec) recs.push({ name, satrec })
+      // satellite.js 对坏数据不抛异常,而是把错误码放在 satrec.error
+      if (!satrec || satrec.error) continue
+      const ep = tleEpochMs(l1)
+      if (Number.isFinite(ep) && ep > epochMax) epochMax = ep
+      recs.push({ name, satrec })
     } catch { /* 坏行跳过 */ }
   }
-  return recs
+  return { recs, epochMax }
 }
 
-function parseSatcat(text) {
+export function parseSatcat(text) {
   const lines = text.split('\n')
   const map = new Map()
   for (let i = 1; i < lines.length; i++) {
@@ -55,7 +73,8 @@ function parseSatcat(text) {
     const c = l.split(',')
     const norad = c[2]?.trim()
     if (!norad || !/^\d+$/.test(norad)) continue
-    map.set(norad, {
+    // 去掉前导零(TLE 里是 00900,SATCAT 是 900),否则 13 颗卫星查不到档案
+    map.set(String(Number(norad)), {
       name: c[0], type: c[3], status: c[4], owner: c[5], launch: c[6],
       period: parseFloat(c[9]) || null,
       inclination: parseFloat(c[10]) || null,
@@ -89,6 +108,7 @@ export function useSatellites(enabled) {
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
   const [updatedAt, setUpdatedAt] = useState(null)
+  const [tleAge, setTleAge] = useState(null)
   const [visibleGroups, setVisibleGroups] = useState({
     starlink: true, oneweb: true, stations: true, gps: true,
     beidou: true, glonass: true, galileo: true, iridium: true,
@@ -98,7 +118,7 @@ export function useSatellites(enabled) {
 
   const dataRef = useRef({
     recs: [], lastFetch: 0, satcat: null,
-    prevFrame: null, prevTime: 0, currFrame: null, currTime: 0,
+    prevFrame: null, prevTime: 0, currFrame: null, currTime: 0, propSimTime: 0,
   })
   const positionsRef = useRef([])
   const frameRef = useRef(0)
@@ -115,24 +135,47 @@ export function useSatellites(enabled) {
     setError(null)
     setProgress(0)
     try {
-      // 1) 全量 TLE(本地快照 → Worker 代理)
-      const fullText = await fetchFirstText(FULL_URLS)
-      setProgress(0.5)
-      const all = parseTLE(fullText)
-
-      // 2) SATCAT(失败不阻塞)
-      let satcat = cache.satcat
-      if (!satcat) {
+      // 1) 全量 TLE:本地快照优先,但必须按 TLE 纪元判断新鲜度
+      //    (CI checkout 会把文件 mtime 设为当前时间,只看 mtime 会永远用旧快照)
+      let best = null
+      const tryText = async (url, timeout) => {
         try {
-          satcat = parseSatcat(await fetchFirstText(SATCAT_URLS))
-          cache.satcat = satcat
-        } catch { /* SATCAT 可选 */ }
+          const text = await fetchText(url, timeout)
+          const parsed = parseTLE(text)
+          return parsed.recs.length >= 1000 ? { text, ...parsed } : null
+        } catch { return null }
       }
-      setSatinfo(satcat)
+      const local = await tryText(FULL_URLS[0], 30000)
+      best = local
+      if (!local || now - local.epochMax > TLE_FRESH_MS) {
+        // 本地过期 → 尝试 Worker 实时代理,取纪元更新的那份
+        const proxied = await tryText(FULL_URLS[1], 20000)
+        if (proxied && (!best || proxied.epochMax > best.epochMax)) best = proxied
+      }
+      if (!best) throw new Error('TLE 不可用(本地快照缺失且 Worker 代理失败)')
+      setProgress(0.5)
+
+      // 2) SATCAT 档案:延迟到空闲时加载,不阻塞首屏
+      if (!cache.satcat && !cache._satcatLoading) {
+        cache._satcatLoading = true
+        const runSatcat = async () => {
+          try {
+            const m = parseSatcat(await fetchFirstText(SATCAT_URLS))
+            cache.satcat = m
+            setSatinfo(m)
+          } catch { cache._satcatLoading = false }
+        }
+        if (typeof window !== 'undefined' && window.requestIdleCallback) {
+          window.requestIdleCallback(runSatcat, { timeout: 8000 })
+        } else {
+          setTimeout(runSatcat, 4000)
+        }
+      }
       setProgress(0.85)
 
-      const recs = all.map((r) => {
-        const norad = String(r.satrec.satnum)
+      const recs = best.recs.map((r) => {
+        // TLE 的 satnum 固定 5 位带前导零,SATCAT/DOM 查询需去掉
+        const norad = String(Number(r.satrec.satnum))
         return {
           id: norad,
           name: r.name,
@@ -145,9 +188,12 @@ export function useSatellites(enabled) {
       cache.recs = recs
       cache.lastFetch = now
       cache.currFrame = null
+      cache.propSimTime = 0
       positionsRef.current = recs
+      // 本机时钟可能落后于 TLE 纪元(时区/校时异常),负数按 0 处理,避免出现“-3 分钟前”
+      setTleAge(Math.max(0, now - best.epochMax))
+      setUpdatedAt(best.epochMax)
       setProgress(1)
-      setUpdatedAt(now)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -169,6 +215,9 @@ export function useSatellites(enabled) {
     if (!enabled) return
     const cache = dataRef.current
     const sim = simRef.current
+    // 首次进入时把仿真时间对齐到当前真实时间(否则沿用上次挂载的时间,LEO 会偏几分钟)
+    sim.time = Date.now()
+    sim.lastReal = 0
     let raf, lastProp = 0, lastPanel = 0
 
     const tick = (realNow) => {
@@ -177,7 +226,8 @@ export function useSatellites(enabled) {
 
       const n = cache.recs.length
       if (n) {
-        if (realNow - lastProp >= PROP_INTERVAL || !cache.currFrame) {
+        const timeChanged = Math.abs(sim.time - cache.propSimTime) > 1
+        if (!cache.currFrame || (timeChanged && realNow - lastProp >= PROP_INTERVAL)) {
           lastProp = realNow
           cache.prevFrame = cache.currFrame
           cache.prevTime = cache.currTime
@@ -201,6 +251,13 @@ export function useSatellites(enabled) {
           }
           cache.currFrame = frame
           cache.currTime = realNow
+          cache.propSimTime = sim.time
+        }
+
+        // 暂停时不插值、不推进帧计数,渲染管线可以完全空闲
+        if (sim.speed === 0 && cache.currFrame) {
+          raf = requestAnimationFrame(tick)
+          return
         }
 
         const { prevFrame, prevTime, currFrame, currTime } = cache
@@ -279,6 +336,7 @@ export function useSatellites(enabled) {
 
   return {
     satellites, satinfo, loading, progress, error, updatedAt,
+    tleAge, tleWarn: tleAge != null && tleAge > TLE_WARN_MS, tleExpired: tleAge != null && tleAge > TLE_EXPIRE_MS,
     visibleGroups, setVisibleGroups,
     speed, setTimeSpeed, resetTime,
     simTimeRef: simRef, positionsRef, frameRef,

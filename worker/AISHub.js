@@ -1,5 +1,17 @@
 // Durable Object:全局单例共享一条 aisstream 上游连接,扇出给所有客户端
-// aisstream 免费账号只允许 1 条并发 WebSocket,必须在服务端做单例复用
+// aisstream 免费账号只允许少量并发 WebSocket,必须在服务端做单例复用
+// Key 只存在 Worker secret(AIS_API_KEY),浏览器端不接触 Key,也不直连 aisstream
+
+const RECONNECT_MIN = 2000
+const RECONNECT_MAX = 30000
+
+// 判断点是否在 [west, south, east, north] 内;west > east 表示跨 180° 经线
+export function inBox(lon, lat, box) {
+  if (!box) return true
+  const [w, s, e, n] = box
+  if (lat < s || lat > n) return false
+  return w <= e ? lon >= w && lon <= e : lon >= w || lon <= e
+}
 
 export class AISHub {
   constructor(state, env) {
@@ -7,10 +19,28 @@ export class AISHub {
     this.env = env
     this.upstream = null
     this.clients = new Set()
+    this.clientBox = new Map() // 客户端 → 视野 bbox(null = 不过滤)
     this.connecting = false
+    this.retry = 0
+  }
+
+  scheduleReconnect() {
+    if (!this.clients.size) return
+    const delay = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** Math.min(this.retry++, 4))
+    // DO 用 alarm 做可靠延时(普通 setTimeout 在休眠/回收后会丢)
+    this.state.storage.setAlarm(Date.now() + delay)
+  }
+
+  async alarm() {
+    if (this.clients.size) await this.connectUpstream()
   }
 
   async connectUpstream() {
+    if (!this.env.AIS_API_KEY) {
+      for (const c of this.clients) { try { c.close(1011, 'server misconfigured') } catch {} }
+      this.clients.clear()
+      return
+    }
     if (this.upstream && this.upstream.readyState === 1) return
     if (this.connecting) return
     this.connecting = true
@@ -19,31 +49,58 @@ export class AISHub {
       this.upstream = ws
       ws.addEventListener('open', () => {
         this.connecting = false
+        this.retry = 0
         try {
           ws.send(JSON.stringify({
             APIKey: this.env.AIS_API_KEY,
+            // 上游仍订阅全球:免费账号只有 1 条连接,多访客视野的并集基本就是全球;
+            // 下行按每个客户端的视野在 DO 内过滤,减少浏览器带宽与渲染压力
             BoundingBoxes: [[[-90, -180], [90, 180]]],
           }))
         } catch {}
       })
       ws.addEventListener('message', (e) => {
         // aisstream 发二进制消息,统一转文本再扇出(避免浏览器收到 Blob 解析失败)
-        const data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)
+        let data
+        try {
+          data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)
+        } catch { return }
+        if (data.includes('"error"')) {
+          // 无效 Key / 超并发:断开并退避,避免空转
+          this.retry = Math.max(this.retry, 2)
+        }
+        // 按客户端视野裁剪:位置报文只有落在该客户端 bbox 内才下发;
+        // 静态报文(船名/目的港)没有坐标,体积小,照常广播
+        let pos = null
+        try {
+          const j = JSON.parse(data)
+          const p = j.Message?.[j.MessageType]
+          if (p && Number.isFinite(p.Latitude) && Number.isFinite(p.Longitude)) {
+            pos = [p.Longitude, p.Latitude]
+          }
+        } catch { /* 非 JSON 或结构异常:不裁剪 */ }
         for (const c of this.clients) {
-          try { c.send(data) } catch { this.clients.delete(c) }
+          if (pos && !inBox(pos[0], pos[1], this.clientBox.get(c))) continue
+          try { c.send(data) } catch {
+            this.clients.delete(c)
+            this.clientBox.delete(c)
+          }
         }
       })
-      const cleanup = () => {
-        this.upstream = null
+      ws.addEventListener('close', () => {
+        if (this.upstream === ws) this.upstream = null
         this.connecting = false
-        for (const c of this.clients) { try { c.close(1011, 'upstream lost') } catch {} }
-        this.clients.clear()
-      }
-      ws.addEventListener('close', cleanup)
-      ws.addEventListener('error', cleanup)
-    } catch (e) {
+        this.scheduleReconnect()
+      })
+      ws.addEventListener('error', () => {
+        if (this.upstream === ws) this.upstream = null
+        this.connecting = false
+        this.scheduleReconnect()
+      })
+    } catch {
       this.connecting = false
       this.upstream = null
+      this.scheduleReconnect()
     }
   }
 
@@ -51,14 +108,46 @@ export class AISHub {
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('expect websocket', { status: 426 })
     }
+    if (this.clients.size >= 500) {
+      return new Response('too many clients', { status: 503 })
+    }
     const pair = new WebSocketPair()
     const [client, server] = Object.values(pair)
     server.accept()
     this.clients.add(server)
-    server.addEventListener('close', () => { this.clients.delete(server) })
-    server.addEventListener('error', () => { this.clients.delete(server) })
+    this.clientBox.set(server, null)
 
-    // 确保上游连接存在
+    const drop = () => {
+      this.clients.delete(server)
+      this.clientBox.delete(server)
+      // 最后一个访客离开后关闭上游,避免 DO 空转计费;下次连接重新建立
+      if (!this.clients.size && this.upstream) {
+        try { this.upstream.close() } catch {}
+        this.upstream = null
+      }
+    }
+    server.addEventListener('close', drop)
+    server.addEventListener('error', drop)
+
+    // 客户端上报视野(地图 moveend 后发送);只用于扇出过滤,不影响上游订阅
+    server.addEventListener('message', (e) => {
+      try {
+        const msg = JSON.parse(typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data))
+        if (msg?.type !== 'viewport') return
+        const b = msg.bbox
+        if (!Array.isArray(b) || b.length !== 4 || !b.every(Number.isFinite)) {
+          this.clientBox.set(server, null) // 无效/空视野 → 不过滤
+          return
+        }
+        const [w, s, e, n] = b.map(Number)
+        if (Math.abs(s) > 90 || Math.abs(n) > 90 || Math.abs(w) > 360 || Math.abs(e) > 360 || s > n) {
+          this.clientBox.set(server, null)
+          return
+        }
+        this.clientBox.set(server, [w, s, e, n])
+      } catch { /* 非本协议的客户端消息忽略 */ }
+    })
+
     this.state.waitUntil(this.connectUpstream())
 
     return new Response(null, { status: 101, webSocket: client })

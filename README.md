@@ -6,7 +6,7 @@
 
 **🔗 在线访问:https://geopulse.guofeng.me**
 
-![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-4-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![satellite.js](https://img.shields.io/badge/satellite.js-SGP4-2ea44f) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV%20%2B%20DO-f38020?logo=cloudflare)
+![React](https://img.shields.io/badge/React-18-61dafb?logo=react) ![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite) ![MapLibre](https://img.shields.io/badge/MapLibre%20GL-6-396cb2) ![deck.gl](https://img.shields.io/badge/deck.gl-9-9146ff) ![satellite.js](https://img.shields.io/badge/satellite.js-SGP4-2ea44f) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Pages%20%2B%20Workers%20%2B%20KV%20%2B%20DO-f38020?logo=cloudflare)
 
 ---
 
@@ -29,7 +29,7 @@
 - 统计卡:总数 / 最大震级 / M5+ 数量 / 最近一次时间
 
 ### ✈️ 航班追踪(类 Flightradar24)
-- 默认**北京视角**起始,视野中心 463km 半径实时航班,**12 秒刷新**,拖动地图自动加载新区域
+- 默认**北京视角**起始,视野中心 463km 半径实时航班,**60 秒刷新(Worker 边缘缓存 180 秒)**,拖动地图自动加载新区域
 - 飞机图标**按真实航向旋转**、按**飞行高度着色**(地面灰 → 低空黄 → 3km 绿 → 6km 蓝 → 9km 紫 → 12km+ 品红)
 - **点击飞机查看完整档案**:
   - 真实**飞机照片**(planespotters.net,带摄影师署名,点击看大图)
@@ -37,25 +37,26 @@
   - **起降机场卡片**:IATA 码 + 城市 + 国家
   - 高度/地速/航向/垂直速率/应答机码/ICAO24
 - **航线可视化**:起飞机场 →(蓝色实线,已飞大圆航段)→ 飞机 →(灰色虚线,待飞)→ 目的机场,两端机场打点标注
-- **双层航迹**:服务端 KV 持续记录(任何访客浏览过的区域自动积累历史)+ 本地 12s 轮询实时累积
-- 搜索(航班号/注册号/机型)、按距离排序、紧急状态(squawk 7700 等)告警
+- **双层航迹**:服务端 KV 持续记录(任何访客浏览过的区域自动积累历史)+ 本地轮询实时累积
+- 搜索(航班号/注册号/机型)、按距离排序、紧急状态(squawk 7500/7600/7700 与 ADS-B emergency 字段)告警
 
 ### 🛰 卫星追踪(3D 地球实时演示)
 - **16,000+ 在轨目标全量渲染**:CelesTrak active 全星座,3D 地球可拖拽/缩放/旋转
-- **TLE 快照分发**:构建时抓取快照随静态站分发(规避 CelesTrak 对浏览器/数据中心 IP 的 403 限流),用户零 CORS 零限流
-- **本地 SGP4 逐帧推算**:卫星逐帧连续运动(60fps),**时间加速 1×-1000×**,暂停/回到现在,UTC 时钟
+- **TLE 快照分发 + 纪元校验**:构建时抓取快照随静态站分发(规避 CelesTrak 对浏览器/数据中心 IP 的 403 限流);按 TLE 自身纪元判断新鲜度,6 小时定时重建,过期时面板明确标注
+- **本地 SGP4 逐帧推算**:卫星逐帧连续运动(1 秒全量推算 + 帧间插值,渲染约 15fps),**时间加速 1×-1000×**,暂停/回到现在,UTC 时钟
 - **10 星座分组**:星链/一网/空间站/GPS/北斗/GLONASS/伽利略/铱星/气象/其他,独立开关+实时计数
 - **点击卫星看档案**:真实照片(Wikimedia Commons)+ SATCAT 档案(所属国、发射日期、轨道周期、倾角、远/近地点)+ 实时位置速度 + 完整轨道线 + 星下点覆盖圈
 - 参考效果:trackthesky.com / satellitemap.space
 
 ### 🚢 船舶追踪(AIS 实时流)
-- **默认马六甲海峡视角**,全球 AIS 实时位置(aisstream.io,浏览器直连 WebSocket,免注册)
+- **默认马六甲海峡视角**,全球 AIS 实时位置(aisstream.io,经 Cloudflare Worker 的 Durable Object 单例代理;Key 只存在 Worker secret,浏览器不接触)
 - 船舶按**真实航向旋转**、按**船型着色**(散货/油轮/集装箱/客轮/渔船/拖船)
-- **国籍识别**:按 MMSI MID 自动识别(巴拿马/利比里亚/马绍尔/中国/日本/新加坡/荷兰/挪威/英国等 20+ 国)
+- **国籍识别**:按 MMSI MID(ITU 分配表,约 290 个识别码)自动识别船旗国
 - **多维过滤**:按船型 / 国籍 / 航速着色,独立开关过滤
+- **视野过滤**:浏览器把地图视野上报给 Durable Object,只下发视野内的船舶位置(静态信息仍全网广播),减少下行流量与渲染压力
 - **点击船舶看档案**:MMSI、IMO、国籍、航速、航向、目的港、载重吨、船长、实时位置
 - **港口标记**:新加坡、巴生港、雅加达等主要港口(黄色锚点)
-- aisstream 限流/过载时自动重连,断线 6 次回退演示数据
+- aisstream 限流/过载时自动重连;握手成功但一直没数据也算失败,连续 6 次后回退演示数据
 
 ### 通用
 - 深色主题 + WebGL 高性能渲染,数千点位流畅交互
@@ -80,8 +81,8 @@
 │ USGS 地震     │   │  Cloudflare Worker + KV     │
 │ istrongcloud │   │  + Durable Object           │
 │ adsbdb 航线   │   │  geopulse-api.guofeng.me    │
-│ airplanes.live│  │  /flights /trail /route     │
-│ aisstream AIS │  │  /photo /typhoon/* /ais     │
+│               │   │  /flights /trail /route     │
+│               │   │  /photo /typhoon/* /tle     │
 └──────────────┘   │  边缘缓存 + 航迹 KV + 单例WS  │
                    └─────────────────────────────┘
 ```
@@ -89,24 +90,24 @@
 **设计要点**
 
 - **动画与渲染分离**:脉冲/扩散动画走独立 rAF 循环直接更新 deck.gl overlay,不触发 React 重渲染;静态图层同步应用,后台标签页不受 rAF 节流影响
-- **卫星 SGP4 逐帧推算**:每帧只传播当前时刻,30fps 连续运动;Starlink 抽样 1800 颗保证流畅
-- **船舶 AIS 直连**:aisstream 对数据中心 IP 限流,浏览器住宅 IP 直连最稳定;二进制消息用 TextDecoder 解析;React StrictMode 双渲染下用 ref 管理 WebSocket 生命周期防重复连接
-- **边缘缓存策略**:航班请求坐标取整到 0.5° 网格 → 相邻用户命中同一缓存(12s TTL),保护免费上游
-- **KV 航迹"搭便车"记录**:`/flights` 缓存未命中回源时顺手把整个区域所有飞机位置写入 KV(150s 写节流,适配免费额度 1000 写/天;每机 60 点,6h 过期),不产生任何额外上游请求
+- **卫星 SGP4 推算**:每秒全量传播当前时刻、帧间线性插值;渲染层限到约 15fps,暂停时不推进帧,移动端限制 DPR ≤ 2
+- **船舶 AIS 经 Worker 代理**:aisstream 免费账号禁止浏览器直连/客户端持有 Key;Durable Object 复用一条上游连接扇出给所有访客,无访客时自动断开上游
+- **边缘缓存策略**:航班请求坐标取整到 0.5° 网格 → 相邻用户命中同一缓存(180s TTL,单网格 ≈480 次/天,控制在 adsb.lol 免费配额内),保护免费上游
+- **KV 航迹"搭便车"记录**:`/flights` 缓存未命中回源时顺手把区域内的飞机位置写入 KV(600s 写节流,单网格 ≈144 写/天;只记最近 150 架、空结果不写),不产生额外上游请求
 - **Durable Object 单例**:aisstream 免费账号仅 1 条并发 WebSocket,Worker 'AISHub' 全局单例扇出给所有客户端(CF IP 被拒时浏览器直连兜底)
 - **多级降级**:每个数据源都有直连→代理→兜底数据的降级链,单点故障不白屏
 
-## 数据源(全部免费,无需 API Key)
+## 数据源(全部免费;前端无需 API Key)
 
 | 模块 | 来源 | 接入方式 | 说明 |
 |---|---|---|---|
-| 地震 | [USGS Earthquake Feed](https://earthquake.usgs.gov/earthquakes/feed/) | 直连 | CORS 开放,全球实时 |
-| 台风 | data.istrongcloud.com | 直连优先,Worker 兜底 | 年度文件 + `is_current` 筛活跃;含多机构预报与四象限风圈 |
-| 航班位置 | [adsb.lol](https://api.adsb.lol) | Worker 代理 | 社区 ADS-B,无 CORS 头必须代理;备源 [airplanes.live](https://airplanes.live)(CORS 开放可直连) |
-| 航线/航司 | [adsbdb](https://www.adsbdb.com) | 直连优先,Worker 兜底 | callsign → 航司/起降机场;对数据中心 IP 有限流,故前端直连优先 |
+| 地震 | [USGS Earthquake Feed](https://earthquake.usgs.gov/earthquakes/feed/) | 直连 | CORS 开放,全球实时;30 天档用 M4.5+ 订阅源控制流量 |
+| 台风 | data.istrongcloud.com | 直连优先,Worker 兜底 | 年度文件(跨年自动回退)+ `is_current` 筛活跃;含多机构预报与四象限风圈 |
+| 航班位置 | [adsb.lol](https://api.adsb.lol) / [adsb.fi](https://adsb.fi) | Worker 代理 | 社区 ADS-B,无 CORS 头必须代理;双源互备 |
+| 航线/航司 | [adsbdb](https://www.adsbdb.com) | 直连优先,Worker 兜底 | callsign → 航司/起降机场 |
 | 飞机照片 | [planespotters.net](https://www.planespotters.net/photo/api) | Worker 代理(24h 缓存) | 要求 UA 携带联系方式,浏览器无法自定义 UA 必须代理 |
-| 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | **构建时快照** | gp.php 对浏览器/数据中心 IP 限流(403),构建时抓取快照到 `/data/` 随站分发;SATCAT 档案同方案 |
-| 船舶 AIS | [aisstream.io](https://aisstream.io) | **浏览器直连 WebSocket** | 全球 AIS 实时流,免费;对数据中心 IP 限流,住宅 IP 直连最稳定;二进制消息需 TextDecoder 解析 |
+| 卫星 TLE | [CelesTrak](https://celestrak.org/NORAD/elements/) | **构建时快照 + Worker 兜底** | gp.php 对浏览器/数据中心 IP 限流;构建时按 TLE 纪元抓取,CI 每 6 小时重建;SATCAT 档案同方案 |
+| 船舶 AIS | [aisstream.io](https://aisstream.io) | **Worker WebSocket(DO 单例)** | 需在 Worker 配置 `AIS_API_KEY` secret;浏览器不接触 Key、不直连上游 |
 
 > ⚠️ 信息仅供参考,台风/地震请以官方预警为准;航班/船舶数据来自社区网络,不得用于运行控制。
 
@@ -116,26 +117,31 @@
 # 前端
 npm install
 npm run dev        # http://localhost:5188
+npm test           # Vitest 单元测试(纯函数:坐标/台风解析/TLE/MMSI 等)
 npm run build      # 产物 dist/,纯静态可部署到任意托管
 
-# 数据代理 Worker(可选;不部署则航班照片/AIS 代理等功能降级)
+# 数据代理 Worker(航班/台风/AIS 必需;不部署则相关功能降级为演示/直连源)
 cd worker
 npx wrangler kv namespace create TRAILS   # 首次:创建 KV 并把 id 填入 wrangler.toml
+npx wrangler secret put AIS_API_KEY       # aisstream.io 用 GitHub 登录后可免费创建 Key
 npx wrangler deploy
 ```
+
+> AIS Key 只保存在 Worker secret 中。请勿把它写进前端代码或提交到仓库——aisstream 的服务条款禁止浏览器直连和公开分发 Key。
 
 自部署需要修改的常量:`src/hooks/useFlights.js`、`src/hooks/useTyphoons.js`、`src/hooks/useShips.js` 里的 API/Worker 地址指向你的域名。
 
 ## 部署
 
-- **前端**:push 到 master → GitHub Actions 自动构建并部署 Cloudflare Pages(`.github/workflows/deploy.yml`,需配置 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 两个 Secrets)
-- **Worker**:改动 `worker/` 后手动 `wrangler deploy`(低频改动,未纳入 CI);AIS 相关 secret:`npx wrangler secret put AIS_API_KEY`
+- **前端**:push 到 master → GitHub Actions 自动构建并部署 Cloudflare Pages(`.github/workflows/deploy.yml`,需配置 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 两个 Secrets);工作流同时每 6 小时定时构建一次,刷新 TLE 快照
+- **Worker**:改动 `worker/` 后手动 `wrangler deploy`(低频改动,未纳入 CI);AIS secret:`npx wrangler secret put AIS_API_KEY`
 
 ## 开发说明
 
 - `scripts/screenshot.mjs`:puppeteer 可视化回归截图(页面含持续 WebGL 动画,截图前设置 `window.__animPaused=true`;macOS 上窗口必须真实可见,遮挡会挂起合成器导致 CDP 截图超时)
 - 调试全局:`window.__map`(MapLibre 实例)、`window.__overlay`(deck.gl overlay)
 - `vite.config.js` 中通过 alias 屏蔽了 satellite.js 的 wasm worker 动态导入(`#wasm-single-thread`/`#wasm-multi-thread` → `src/utils/satellite-wasm-stub.js`),强制使用纯 JS SGP4 实现,避免浏览器打包失败
+- MapLibre GL 6 通过 `new URL(..., import.meta.url)` 动态加载内部 worker,Vite 静态分析不到;`src/App.jsx` 用 `?url` 导入 `maplibre-gl-worker.mjs` 并调用 `maplibregl.setWorkerUrl()` 显式指定,否则构建产物会报 "Worker failed to load"
 - 腾讯/高德底图为 GCJ-02 坐标系,与 WGS-84 数据叠加在省级缩放(z≤8)偏差 <1px 可忽略;街道级精度请切 CARTO/Esri
 - AIS 船舶的船型字段在 aisstream 的 PositionReport 里常缺失,要等同船 ShipStaticData 到达后才会从"散货船"细分为集装箱/油轮等(AIS 协议特性)
 
@@ -156,4 +162,4 @@ MIT
 
 ## 致谢
 
-数据服务:USGS · istrongcloud · adsb.lol · airplanes.live · adsbdb · planespotters.net · CelesTrak · aisstream.io · 腾讯地图 · CARTO · Esri —— 感谢这些免费开放的数据与服务让本项目成为可能。
+数据服务:USGS · istrongcloud · adsb.lol · adsb.fi · adsbdb · planespotters.net · CelesTrak · aisstream.io · 腾讯地图 · CARTO · Esri —— 感谢这些免费开放的数据与服务让本项目成为可能。

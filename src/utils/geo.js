@@ -31,37 +31,44 @@ export function destPoint([lon, lat], bearing, dist) {
 }
 
 // 非对称风圈：四象限半径（km）→ 多边形环
-// radii: { ne, se, sw, nw }
+// radii: { ne, se, sw, nw }。AIS/台风资料里四象限就是四个扇区,
+// 扇区内半径恒定,不能做象限间线性插值(会把 500/100 的东北/东南风圈画小一半)
 export function windQuadPolygon(center, radii, stepsPerQuad = 16) {
-  const quads = [
-    [0, radii.ne],
-    [90, radii.se],
-    [180, radii.sw],
-    [270, radii.nw],
-  ]
+  const quads = [radii.ne, radii.se, radii.sw, radii.nw]
   const ring = []
   for (let q = 0; q < 4; q++) {
-    const [startBearing] = quads[q]
-    const r0 = quads[q][1]
-    const r1 = quads[(q + 1) % 4][1]
     for (let i = 0; i < stepsPerQuad; i++) {
-      const t = i / stepsPerQuad
-      const bearing = startBearing + t * 90
-      // 象限间半径平滑过渡
-      const r = r0 + (r1 - r0) * t
-      ring.push(destPoint(center, bearing, r))
+      const bearing = q * 90 + (i / stepsPerQuad) * 90
+      ring.push(destPoint(center, bearing, quads[q]))
     }
   }
   ring.push(ring[0])
   return ring
 }
 
-// 沿带时间戳的轨迹，找距城市最近的点 → 预计影响时间
+// 沿带时间戳的轨迹，找距城市最近的线段 → 预计影响时间(线段内插值,比只比离散点精确)
 export function cityImpact(track, city, thresholdKm = 300) {
+  if (!track?.length) return null
+  if (track.length === 1) {
+    const d = haversine(track[0].coord, city.coord)
+    return d <= thresholdKm ? { dist: d, time: track[0].time, point: track[0] } : null
+  }
   let best = null
-  for (const p of track) {
-    const d = haversine(p.coord, city.coord)
-    if (!best || d < best.dist) best = { dist: d, time: p.time, point: p }
+  for (let i = 1; i < track.length; i++) {
+    const a = track[i - 1]
+    const b = track[i]
+    const k = Math.cos(rad((a.coord[1] + b.coord[1]) / 2))
+    const ax = a.coord[0] * k, ay = a.coord[1]
+    const bx = b.coord[0] * k, by = b.coord[1]
+    const px = city.coord[0] * k, py = city.coord[1]
+    const dx = bx - ax, dy = by - ay
+    const len2 = dx * dx + dy * dy
+    const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0
+    const p = [a.coord[0] + (b.coord[0] - a.coord[0]) * t, a.coord[1] + (b.coord[1] - a.coord[1]) * t]
+    const d = haversine(p, city.coord)
+    if (!best || d < best.dist) {
+      best = { dist: d, time: a.time + (b.time - a.time) * t, point: a }
+    }
   }
   if (!best || best.dist > thresholdKm) return null
   return best
@@ -75,7 +82,15 @@ export function fmtCountdown(ms) {
   return `${h}小时${String(m).padStart(2, '0')}分`
 }
 
+// 统一按北京时间显示,避免海外用户看到“本地时区”的错位时间
+const BJ_FMT = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+})
+
 export function fmtTime(t) {
-  const d = new Date(t)
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (!Number.isFinite(t)) return '—'
+  const parts = {}
+  for (const p of BJ_FMT.formatToParts(new Date(t))) parts[p.type] = p.value
+  return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`
 }

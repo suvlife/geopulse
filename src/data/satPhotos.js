@@ -52,7 +52,7 @@ export const NAME_PHOTOS = [
 // 轨道类型配图(无专属照片时的兜底,按高度区间)
 export const ORBIT_FALLBACK = [
   { maxAlt: 2000e3, label: '低地球轨道 (LEO)', color: '#4da3ff' },
-  { maxAlt: 40000e3, label: '中地球轨道 (MEO)', color: '#ffd84a' },
+  { maxAlt: 30000e3, label: '中地球轨道 (MEO)', color: '#ffd84a' },
   { maxAlt: Infinity, label: '地球同步轨道 (GEO)', color: '#d253d9' },
 ]
 

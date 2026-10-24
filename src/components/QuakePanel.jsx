@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { magColor } from '../utils/scales.js'
 import { fmtTime } from '../utils/geo.js'
+import { FEED_MIN_MAG } from '../hooks/useEarthquakes.js'
 
 function timeAgo(t, now) {
   const m = Math.floor((now - t) / 60000)
@@ -72,6 +73,9 @@ export default function QuakePanel({ quakes, params, setParams, selected, onSele
           ))}
         </div>
       </div>
+      {FEED_MIN_MAG[params.range] > 0 && (
+        <div className="detail-meta">30 天档只包含 M{FEED_MIN_MAG[params.range]}+ 地震(节省流量的免费源限制)</div>
+      )}
 
       <div className="control-row">
         <label className="slider-label">
@@ -110,7 +114,7 @@ export default function QuakePanel({ quakes, params, setParams, selected, onSele
           </div>
           <div className="detail-meta">
             {fmtTime(selected.time)} · 深度 {selected.depth.toFixed(0)} km
-            {selected.tsunami && <span className="tsunami"> ⚠️ 海啸预警</span>}
+            {selected.tsunami && <span className="tsunami"> ⚠️ 位于海啸预警区</span>}
           </div>
           <a href={selected.url} target="_blank" rel="noreferrer" className="detail-link">USGS 详情 ↗</a>
         </div>

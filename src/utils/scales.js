@@ -54,6 +54,17 @@ export const AGENCY_COLORS = {
   HKO: [255, 190, 90],
   KMA: [200, 140, 255],
   CWA: [110, 220, 220],
+  ECMWF: [150, 120, 255],
+}
+
+export const AGENCY_NAMES = {
+  CMA: '中央气象台',
+  JMA: '日本气象厅',
+  JTWC: '美国 JTWC',
+  HKO: '香港天文台',
+  KMA: '韩国气象厅',
+  CWA: '台湾气象署',
+  ECMWF: '欧洲 ECMWF',
 }
 
 // 飞行高度 → 颜色(米):低空暖色 → 高空冷色,类 FR24

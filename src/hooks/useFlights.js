@@ -1,15 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+// 航班位置统一走 Worker:主源 adsb.lol、备源 adsb.fi(均由 Worker 合并/缓存)
+// 浏览器直连 airplanes.live 已对非 feeder IP 返回 403,不再使用
 const API = 'https://geopulse-api.guofeng.me'
-const DIRECT = 'https://api.airplanes.live/v2' // Worker 不可达时浏览器直连兜底(CORS *)
+const POLL_MS = 60000 // Worker 边缘缓存 180s;前端 60s 轮询,兼顾时效与 adsb.lol 500 次/天配额
 
-// adsb.lol / airplanes.live 均为 readsb 格式
-function normalize(d) {
+const EMERG_SQUAWK = { 7500: 'unlawful', 7600: 'radio', 7700: 'general' }
+const REAL_EMERG = new Set(['general', 'unlawful', 'downed', 'nordo'])
+
+export function emergencyOf(a) {
+  const sq = String(a.squawk ?? '').trim()
+  if (EMERG_SQUAWK[sq]) return EMERG_SQUAWK[sq]
+  // lifeguard / minfuel 是状态提示,不算紧急情况
+  return REAL_EMERG.has(a.emergency) ? a.emergency : null
+}
+
+function coordOf(lon, lat) {
+  const x = Number(lon), y = Number(lat)
+  return Number.isFinite(x) && Number.isFinite(y) && Math.abs(y) <= 90 ? [x, y] : null
+}
+
+// adsb.lol / adsb.fi 均为 readsb 格式
+export function normalize(d, fetchedAt) {
   return (d.ac || [])
-    .filter((a) => a.lat != null && a.lon != null)
+    .filter((a) => a.lat != null && a.lon != null && Math.abs(a.lat) <= 90 && Math.abs(a.lon) <= 180)
     .map((a) => {
       const onGround = a.alt_baro === 'ground'
       const altFt = typeof a.alt_baro === 'number' ? a.alt_baro : null
+      // seen_pos:距上一次位置更新的秒数,比“抓取时刻”更真实
+      const ageS = Number.isFinite(a.seen_pos) ? Math.max(0, a.seen_pos) : 0
       return {
         hex: a.hex,
         callsign: (a.flight || '').trim() || (a.r || '').trim() || a.hex.toUpperCase(),
@@ -20,14 +39,22 @@ function normalize(d) {
         altM: onGround ? null : altFt != null ? Math.round(altFt * 0.3048) : null,
         altFt,
         speedKmh: a.gs != null ? Math.round(a.gs * 1.852) : null,
-        track: a.track ?? a.true_heading ?? null,
+        track: a.track ?? a.true_heading ?? a.calc_track ?? null,
         vrateMs: a.baro_rate != null ? +(a.baro_rate * 0.00508).toFixed(1) : null,
         squawk: a.squawk || '',
-        emergency: a.emergency && a.emergency !== 'none' ? a.emergency : null,
+        emergency: emergencyOf(a),
         distKm: a.dst != null ? Math.round(a.dst * 1.852) : null,
-        time: Date.now(),
+        time: fetchedAt - ageS * 1000,
+        posAgeS: Math.round(ageS),
       }
     })
+    .filter((f) => f.posAgeS <= 180) // 超过 3 分钟未更新的位置不再展示
+}
+
+function signalWithTimeout(ctrl, ms) {
+  return AbortSignal.any
+    ? AbortSignal.any([ctrl.signal, AbortSignal.timeout(ms)])
+    : ctrl.signal
 }
 
 export function useFlights(center, enabled) {
@@ -35,65 +62,69 @@ export function useFlights(center, enabled) {
   const trailsRef = useRef(new Map()) // hex → [{coord, altM, time}]
   const centerRef = useRef(center)
   centerRef.current = center
+  const seqRef = useRef(0)
+  const ctrlRef = useRef(null)
+  const infoTokenRef = useRef(0)
 
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
+    ctrlRef.current?.abort()
+    const ctrl = new AbortController()
+    ctrlRef.current = ctrl
     const [lon, lat] = centerRef.current
-    const qs = `lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}&dist=250`
-    const directUrl = `${DIRECT}/point/${lat.toFixed(2)}/${lon.toFixed(2)}/250`
-    // 双源并行:Worker 代理(adsb.lol,数据更全)+ airplanes.live 直连(CORS 稳)
-    // 按 hex 合并,同一架飞机优先 adsb.lol 字段
-    const fetchJson = async (u) => {
-      const r = await fetch(u, { signal: AbortSignal.timeout(12000) })
-      if (!r.ok) throw new Error(`${r.status}`)
-      return r.json()
-    }
-    const [workerRes, directRes] = await Promise.allSettled([
-      fetchJson(`${API}/flights?${qs}`),
-      fetchJson(directUrl),
-    ])
-    const merged = new Map()
-    let source = null
-    // 先放直连(airplanes.live),再放 Worker(adsb.lol)覆盖同 hex
-    if (directRes.status === 'fulfilled' && Array.isArray(directRes.value?.ac)) {
-      for (const a of directRes.value.ac) if (a.hex) merged.set(a.hex, a)
-      if (directRes.value.ac.length) source = 'airplanes.live'
-    }
-    if (workerRes.status === 'fulfilled' && Array.isArray(workerRes.value?.ac)) {
-      for (const a of workerRes.value.ac) if (a.hex) merged.set(a.hex, a)
-      if (workerRes.value.ac.length) source = workerRes.value.ac.length >= (merged.size || 1) ? 'adsb.lol' : source
-    }
-    const data = { ac: [...merged.values()] }
-    if (!data.ac.length) {
-      const err = workerRes.status === 'rejected' && directRes.status === 'rejected' ? 'all sources failed' : null
-      setState((s) => ({ ...s, loading: false, error: err }))
-      return
-    }
-    const flights = normalize(data)
-    // 轨迹累积:每次轮询追加新位置,选中的飞机即可画出历史航路
-    const trails = trailsRef.current
-    const seen = new Set()
-    const now = Date.now()
-    for (const f of flights) {
-      seen.add(f.hex)
-      const arr = trails.get(f.hex) || []
-      const last = arr[arr.length - 1]
-      if (!last || last.coord[0] !== f.coord[0] || last.coord[1] !== f.coord[1]) {
-        arr.push({ coord: f.coord, altM: f.altM, time: f.time })
-        if (arr.length > 150) arr.splice(0, arr.length - 150)
-        trails.set(f.hex, arr)
+    try {
+      const r = await fetch(`${API}/flights?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}&dist=250`, {
+        signal: signalWithTimeout(ctrl, 15000),
+      })
+      if (seq !== seqRef.current) return
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const data = await r.json()
+      if (seq !== seqRef.current) return
+      if (data?.error) throw new Error(data.error)
+
+      const fetchedAt = Date.now()
+      const flights = normalize(data, fetchedAt)
+      const source = r.headers.get('X-Source') || 'adsb.lol'
+
+      // 轨迹累积:每次轮询追加新位置,选中的飞机即可画出历史航路
+      const trails = trailsRef.current
+      const seen = new Set()
+      for (const f of flights) {
+        seen.add(f.hex)
+        const arr = trails.get(f.hex) || []
+        const last = arr[arr.length - 1]
+        if (!last || last.coord[0] !== f.coord[0] || last.coord[1] !== f.coord[1]) {
+          arr.push({ coord: f.coord, altM: f.altM, time: f.time })
+          if (arr.length > 150) arr.splice(0, arr.length - 150)
+          trails.set(f.hex, arr)
+        }
       }
+      for (const [hex, arr] of trails) {
+        if (!seen.has(hex) && fetchedAt - arr[arr.length - 1].time > 600000) trails.delete(hex)
+      }
+      setState((s) => ({
+        flights,
+        loading: false,
+        error: null,
+        updatedAt: fetchedAt,
+        source,
+        trailsVersion: s.trailsVersion + 1,
+      }))
+    } catch (e) {
+      if (seq !== seqRef.current || e.name === 'AbortError') return
+      // 失败保留上一份航班,避免地图瞬间清空
+      setState((s) => ({ ...s, loading: false, error: e.message }))
     }
-    for (const [hex, arr] of trails) {
-      if (!seen.has(hex) && now - arr[arr.length - 1].time > 600000) trails.delete(hex)
-    }
-    setState((s) => ({ flights, loading: false, error: null, updatedAt: now, source, trailsVersion: s.trailsVersion + 1 }))
   }, [])
 
   // 选中飞机时拉取服务端 KV 历史轨迹,与本地累积合并(服务端点更早,补齐选中前的航路)
+  // KV 按“查询中心网格”存储,所以这里也用地视图中心(而不是飞机自身坐标)
   const loadServerTrail = useCallback(async (hex) => {
     try {
       const [lon, lat] = centerRef.current
-      const r = await fetch(`${API}/trail?icao24=${hex}&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`, { signal: AbortSignal.timeout(10000) })
+      const r = await fetch(`${API}/trail?icao24=${hex}&lat=${(+lat).toFixed(2)}&lon=${(+lon).toFixed(2)}`, {
+        signal: AbortSignal.timeout(10000),
+      })
       if (!r.ok) return
       const d = await r.json()
       const pts = (d.path || []).map(([t, lo, la, alt]) => ({ coord: [lo, la], altM: alt ?? null, time: t * 1000 }))
@@ -108,15 +139,24 @@ export function useFlights(center, enabled) {
 
   useEffect(() => {
     if (!enabled) return
-    setState((s) => ({ ...s, loading: true }))
+    setState((s) => ({ ...s, loading: !s.flights.length }))
     load()
-    const t = setInterval(load, 12000)
-    return () => clearInterval(t)
+    const t = setInterval(() => {
+      if (!document.hidden) load()
+    }, POLL_MS)
+    const onVisible = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+      ctrlRef.current?.abort()
+    }
     // centerKey 变化(0.5° 网格)时立即重拉,与 Worker 缓存粒度一致
   }, [enabled, load, Math.round(center[0] * 2) / 2, Math.round(center[1] * 2) / 2])
 
-  // 选中飞机 → 航线信息(航司/起降机场,adsbdb 直连优先 Worker 兜底)+ 照片(必须走 Worker,planespotters 要求合规 UA)
+  // 选中飞机 → 航线信息(航司/起降机场,adsbdb 直连优先 Worker 兜底)+ 照片(必须走 Worker)
   const loadFlightInfo = useCallback(async (hex, callsign) => {
+    const token = ++infoTokenRef.current // 连点 A→B 时,丢弃 A 的迟到响应
     const cs = (callsign || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
     const out = { route: null, photo: null }
     const jobs = []
@@ -136,20 +176,17 @@ export function useFlights(center, enabled) {
             }
             const fr = d?.response?.flightroute
             if (!fr) return
+            const airport = (a) => a ? {
+              name: a.name, iata: a.iata_code, icao: a.icao_code,
+              city: a.municipality, country: a.country_name,
+              coord: coordOf(a.longitude, a.latitude),
+            } : null
             out.route = {
               airline: fr.airline?.name || null,
               airlineCountry: fr.airline?.country || null,
               airlineIata: fr.airline?.iata || null,
-              origin: fr.origin ? {
-                name: fr.origin.name, iata: fr.origin.iata_code, icao: fr.origin.icao_code,
-                city: fr.origin.municipality, country: fr.origin.country_name,
-                coord: [fr.origin.longitude, fr.origin.latitude],
-              } : null,
-              destination: fr.destination ? {
-                name: fr.destination.name, iata: fr.destination.iata_code, icao: fr.destination.icao_code,
-                city: fr.destination.municipality, country: fr.destination.country_name,
-                coord: [fr.destination.longitude, fr.destination.latitude],
-              } : null,
+              origin: airport(fr.origin),
+              destination: airport(fr.destination),
             }
           } catch { /* 包机/军机等查不到航线,静默 */ }
         })()
@@ -173,7 +210,7 @@ export function useFlights(center, enabled) {
       })()
     )
     await Promise.all(jobs)
-    return out
+    return token === infoTokenRef.current ? out : null
   }, [])
 
   return { ...state, trails: trailsRef.current, refresh: load, loadServerTrail, loadFlightInfo }
