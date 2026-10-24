@@ -150,20 +150,21 @@ async function handleFlights(url, env, ctx) {
   }
 
   let result = null
-  let lastErr = null
+  const errs = []
   try {
     result = await fetchAircraft(primary)
-  } catch (e) { lastErr = e }
+  } catch (e) { errs.push(e.message) }
   // 主源失败或空结果时用 adsb.fi 补位
   if (!result?.ac.length) {
     try {
       const fb = await fetchAircraft(backup, backup)
       if (fb.ac.length || !result) result = fb
-    } catch (e) { lastErr = lastErr || e }
+    } catch (e) { errs.push(e.message) }
   }
 
   if (!result) {
-    return json({ error: String(lastErr || 'all sources failed') }, 502, { 'Cache-Control': 'no-store' })
+    // 把两个源各自的失败原因都带上,方便判断是限流还是封禁
+    return json({ error: errs.join(' / ') || 'all sources failed' }, 502, { 'Cache-Control': 'no-store' })
   }
 
   const now = Date.now()
@@ -267,6 +268,12 @@ export default {
       })
     }
 
+    // 运维诊断:AIS 上游连接状态(不含 Key),用于判断是 Key 失效还是边缘 IP 被拒
+    if (p === '/ais/status') {
+      const id = env.AIS_HUB.idFromName('global')
+      return env.AIS_HUB.get(id).fetch(new Request('https://ais.internal/status'))
+    }
+
     // AIS 实时流代理:Durable Object 单例共享一条 aisstream 连接(免费账号仅 1 并发)
     // key 存 Worker secret(AIS_API_KEY),客户端零配置
     if (p === '/ais') {
@@ -278,7 +285,7 @@ export default {
     }
 
     return json(
-      { service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail', '/tle', '/satcat', '/ais'] },
+      { service: 'geopulse-api', endpoints: ['/flights', '/trail', '/route', '/photo', '/typhoon/list', '/typhoon/detail', '/tle', '/satcat', '/ais', '/ais/status'] },
       p === '/' ? 200 : 404
     )
   },

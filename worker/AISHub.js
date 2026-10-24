@@ -22,6 +22,8 @@ export class AISHub {
     this.clientBox = new Map() // 客户端 → 视野 bbox(null = 不过滤)
     this.connecting = false
     this.retry = 0
+    this.lastError = null
+    this.lastMessageAt = 0
   }
 
   scheduleReconnect() {
@@ -68,9 +70,11 @@ export class AISHub {
         if (data.includes('"error"')) {
           // 无效 Key / 超并发:断开并退避,避免空转
           this.retry = Math.max(this.retry, 2)
+          this.lastError = data.slice(0, 300)
         }
         // 按客户端视野裁剪:位置报文只有落在该客户端 bbox 内才下发;
         // 静态报文(船名/目的港)没有坐标,体积小,照常广播
+        this.lastMessageAt = Date.now()
         let pos = null
         try {
           const j = JSON.parse(data)
@@ -105,6 +109,18 @@ export class AISHub {
   }
 
   async fetch(request) {
+    const url = new URL(request.url)
+    // 运维诊断:不暴露 Key,只给出上游状态,便于区分“Key 失效”和“边缘 IP 被拒”
+    if (url.pathname === '/status') {
+      return Response.json({
+        clients: this.clients.size,
+        connecting: this.connecting,
+        retry: this.retry,
+        upstream: this.upstream ? this.upstream.readyState : null, // 0 连接中 1 已连接 2 关闭中 3 已关闭
+        lastError: this.lastError || null,
+        lastMessageAt: this.lastMessageAt || null,
+      })
+    }
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('expect websocket', { status: 426 })
     }

@@ -128,6 +128,8 @@ npx wrangler deploy
 ```
 
 > AIS Key 只保存在 Worker secret 中。请勿把它写进前端代码或提交到仓库——aisstream 的服务条款禁止浏览器直连和公开分发 Key。
+>
+> AIS 排障:`curl https://geopulse-api.guofeng.me/ais/status` 返回上游连接状态(不含 Key)。若 `upstream` 为 1(已连接)但 `lastMessageAt` 为 null,说明 Key 已失效/被吊销或额度用尽,需要到 aisstream 重新生成后 `npx wrangler secret put AIS_API_KEY`;若 `lastError` 有内容,按报错处理(多为并发超限)。
 
 自部署需要修改的常量:`src/hooks/useFlights.js`、`src/hooks/useTyphoons.js`、`src/hooks/useShips.js` 里的 API/Worker 地址指向你的域名。
 
