@@ -59,6 +59,14 @@ export class AISHub {
             // 上游仍订阅全球:免费账号只有 1 条连接,多访客视野的并集基本就是全球;
             // 下行按每个客户端的视野在 DO 内过滤,减少浏览器带宽与渲染压力
             BoundingBoxes: [[[-90, -180], [90, 180]]],
+            // 不指定时 aisstream 基本只推位置报文,拿不到船型/目的港等静态档案
+            FilterMessageTypes: [
+              'PositionReport',
+              'StandardClassBPositionReport',
+              'ExtendedClassBPositionReport',
+              'ShipStaticData',
+              'StaticDataReport',
+            ],
           })
           ws.send(payload)
           subscribed = true
