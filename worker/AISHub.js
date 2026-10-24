@@ -24,6 +24,8 @@ export class AISHub {
     this.retry = 0
     this.lastError = null
     this.lastMessageAt = 0
+    this.subscribed = false
+    this.msgEvents = 0
   }
 
   scheduleReconnect() {
@@ -47,26 +49,48 @@ export class AISHub {
     if (this.connecting) return
     this.connecting = true
     try {
-      const ws = new WebSocket('wss://stream.aisstream.io/v0/stream')
-      this.upstream = ws
-      ws.addEventListener('open', () => {
-        this.connecting = false
-        this.retry = 0
+      let ws
+      let subscribed = false
+      const subscribe = () => {
+        if (subscribed) return
         try {
-          ws.send(JSON.stringify({
+          const payload = JSON.stringify({
             APIKey: this.env.AIS_API_KEY,
             // 上游仍订阅全球:免费账号只有 1 条连接,多访客视野的并集基本就是全球;
             // 下行按每个客户端的视野在 DO 内过滤,减少浏览器带宽与渲染压力
             BoundingBoxes: [[[-90, -180], [90, 180]]],
-          }))
-        } catch {}
-      })
-      ws.addEventListener('message', (e) => {
-        // aisstream 发二进制消息,统一转文本再扇出(避免浏览器收到 Blob 解析失败)
+          })
+          ws.send(payload)
+          subscribed = true
+          this.subscribed = true
+          this.connecting = false
+          this.retry = 0
+          console.log('ais subscribed, bytes:', payload.length)
+        } catch (e) {
+          // 发送失败必须断开重连,否则会一直挂在“已连接但没有订阅”的空转状态
+          console.log('ais subscribe failed:', String(e))
+          try { ws.close(1011, 'subscribe failed') } catch {}
+        }
+      }
+
+      // 用标准 WebSocket 连接(本地同 key 验证可用)
+      ws = new WebSocket('wss://stream.aisstream.io/v0/stream')
+      this.upstream = ws
+      ws.addEventListener('open', subscribe)
+      ws.addEventListener('message', async (e) => {
+        this.msgEvents++
+        if (this.msgEvents === 1) this.firstType = `${typeof e.data}:${e.data?.constructor?.name || ''}`
+        // aisstream 发二进制消息,统一转文本再扇出:
+        // Workers 可能给 ArrayBuffer / Uint8Array / Blob,三种都要处理
         let data
         try {
-          data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)
-        } catch { return }
+          const d = e.data
+          if (typeof d === 'string') data = d
+          else if (d instanceof ArrayBuffer) data = new TextDecoder().decode(d)
+          else if (ArrayBuffer.isView(d)) data = new TextDecoder().decode(d)
+          else if (typeof d?.text === 'function') data = await d.text()
+          else data = String(d)
+        } catch (err) { this.decodeError = String(err); return }
         if (data.includes('"error"')) {
           // 无效 Key / 超并发:断开并退避,避免空转
           this.retry = Math.max(this.retry, 2)
@@ -75,6 +99,7 @@ export class AISHub {
         // 按客户端视野裁剪:位置报文只有落在该客户端 bbox 内才下发;
         // 静态报文(船名/目的港)没有坐标,体积小,照常广播
         this.lastMessageAt = Date.now()
+        if (!this._loggedFirst) { this._loggedFirst = true; console.log('ais first message bytes:', data.length) }
         let pos = null
         try {
           const j = JSON.parse(data)
@@ -91,12 +116,14 @@ export class AISHub {
           }
         }
       })
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (ev) => {
+        console.log('ais upstream close', ev?.code, ev?.reason || '')
         if (this.upstream === ws) this.upstream = null
         this.connecting = false
         this.scheduleReconnect()
       })
-      ws.addEventListener('error', () => {
+      ws.addEventListener('error', (ev) => {
+        console.log('ais upstream error', String(ev?.message || ev?.error || 'unknown'))
         if (this.upstream === ws) this.upstream = null
         this.connecting = false
         this.scheduleReconnect()
@@ -116,7 +143,11 @@ export class AISHub {
         clients: this.clients.size,
         connecting: this.connecting,
         retry: this.retry,
-        upstream: this.upstream ? this.upstream.readyState : null, // 0 连接中 1 已连接 2 关闭中 3 已关闭
+        upstream: this.upstream ? this.upstream.readyState : null,
+        subscribed: this.subscribed,
+        msgEvents: this.msgEvents,
+        firstType: this.firstType || null,
+        decodeError: this.decodeError || null, // 0 连接中 1 已连接 2 关闭中 3 已关闭
         lastError: this.lastError || null,
         lastMessageAt: this.lastMessageAt || null,
       })

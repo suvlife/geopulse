@@ -270,7 +270,7 @@ export default {
 
     // 运维诊断:AIS 上游连接状态(不含 Key),用于判断是 Key 失效还是边缘 IP 被拒
     if (p === '/ais/status') {
-      const id = env.AIS_HUB.idFromName('global')
+      const id = env.AIS_HUB.idFromName('global-v4')
       return env.AIS_HUB.get(id).fetch(new Request('https://ais.internal/status'))
     }
 
@@ -280,7 +280,7 @@ export default {
       if (request.headers.get('Upgrade') !== 'websocket') return json({ error: 'expect websocket' }, 426)
       if (!AIS_ORIGIN_OK(request.headers.get('Origin'))) return json({ error: 'origin not allowed' }, 403)
       if (!env.AIS_API_KEY) return json({ error: 'AIS_API_KEY not set' }, 500)
-      const id = env.AIS_HUB.idFromName('global')
+      const id = env.AIS_HUB.idFromName('global-v4')
       return env.AIS_HUB.get(id).fetch(request)
     }
 
